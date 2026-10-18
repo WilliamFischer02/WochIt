@@ -83,3 +83,12 @@ the browser, and restricts chat GIF URLs to the chosen providers' CDN hosts.
 pnpm workspaces (`shared`, `host`, `web`). Host serves `web/dist`; Vercel builds the same
 `web/dist` from the repo as the public connect page. GitHub Actions on ubuntu for CI (ffmpeg via
 apt for the e2e job). Agents do not commit; the integrating session does, at wave boundaries.
+
+## 2026-10-18 — The Vercel page is a fallback, the tailnet link is the product
+
+Live test from the Vercel origin: Chrome's Local Network Access check blocked the WebSocket and
+media requests to the tailnet address (`ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS`) because a
+public site was reaching a 100.64.0.0/10 address. Real Chrome shows a permission prompt instead
+of a silent block; Safari does not check. The host now answers the older opt-in preflight
+header (`Access-Control-Allow-Private-Network: true`) and SETUP § 10 explains the prompt, but
+the recommended link remains the same-origin tailnet URL, which needs none of this.

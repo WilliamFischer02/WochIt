@@ -17,6 +17,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @wochit/shared build   # host and web typecheck against shared/dist
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build

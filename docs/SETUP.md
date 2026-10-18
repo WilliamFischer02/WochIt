@@ -362,3 +362,19 @@ Commands checked on 2026-10-18 against the Tailscale docs
 [Pricing](https://tailscale.com/pricing)), the `--help` of Tailscale 1.102.4, the
 [VLC HTTP interface wiki](https://wiki.videolan.org/Documentation:Modules/http_intf/) and VLC
 3.0.21's own preference labels, and the Klipy and GIPHY pages linked in [§6](#6-gif-search-klipy-or-giphy).
+
+## 10. The public connect page (optional)
+
+The same web app is also published at `https://wochit.vercel.app` from every push to `main`. It is
+a fallback, not the normal way in: it asks for the host URL, then talks to your PC across origins.
+Use it only when the normal tailnet link cannot be opened directly. Two things to know:
+
+1. Chrome (desktop and Android) treats your tailnet address as a local network and asks
+   "wochit.vercel.app wants to access devices on your local network" the first time. Tap
+   **Allow**; a blocked request shows as "Could not reach the host". Safari on iPhone does not
+   ask.
+2. The host only accepts cross-origin calls from the origins in `WOCHIT_CORS_ORIGINS` (default
+   `https://wochit.vercel.app`).
+
+The recommended link stays `https://william-desktop.tail2ac207.ts.net:8443`, which is same-origin
+and needs no permission prompt.

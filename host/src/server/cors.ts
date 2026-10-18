@@ -70,6 +70,10 @@ export function corsMiddleware(allow: Iterable<string>, onDenied: (req: Request)
     res.setHeader('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
     res.setHeader('Access-Control-Expose-Headers', CORS_EXPOSE_HEADERS);
     res.setHeader('Access-Control-Max-Age', '600');
+    // Chrome's Private/Local Network Access: a public page (the Vercel connect page) reaching a
+    // tailnet address. Newer Chrome asks the user for permission; older Chrome requires this
+    // preflight opt-in. Harmless for everyone else.
+    if (req.headers['access-control-request-private-network'] === 'true') res.setHeader('Access-Control-Allow-Private-Network', 'true');
     if (req.method === 'OPTIONS') {
       res.status(204).end();
       return;
