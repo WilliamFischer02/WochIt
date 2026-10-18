@@ -124,7 +124,8 @@ describe('VlcBridge', () => {
     expect(ev.positionSec).toBeCloseTo(0.24669997394085 * 30, 6);
   });
 
-  it('uses the probed duration for positionSec once hinted (case-insensitive path match)', async () => {
+  // Case-insensitive matching is a Windows filesystem rule; on Linux the bridge compares exactly.
+  it.skipIf(process.platform !== 'win32')('uses the probed duration for positionSec once hinted (case-insensitive path match)', async () => {
     const { bridge, events } = makeBridge((url) =>
       url.pathname.endsWith('status.json') ? jsonResponse(fixture('status-resumed.json')) : jsonResponse(fixture('playlist.json')),
     );

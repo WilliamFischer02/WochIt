@@ -3,13 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { ConfigError, PACKAGE_DIR, loadConfig, splitRoots } from '../src/config.js';
 
 const cwd = 'C:\\cwd';
+// Expectations go through path.resolve so they hold on Linux CI too, where `X:\...` is relative.
+const r = (p: string): string => path.resolve(cwd, p);
 
 describe('splitRoots', () => {
   it('splits on ";", trims, drops empties and duplicates, resolves to absolute', () => {
     expect(splitRoots('X:\\Video Folder\\Plex Movies; X:\\Video Folder ;;"D:\\T"; X:\\Video Folder', cwd)).toEqual([
-      'X:\\Video Folder\\Plex Movies',
-      'X:\\Video Folder',
-      'D:\\T',
+      r('X:\\Video Folder\\Plex Movies'),
+      r('X:\\Video Folder'),
+      r('D:\\T'),
     ]);
     expect(splitRoots(undefined, cwd)).toEqual([]);
     expect(splitRoots('', cwd)).toEqual([]);
@@ -56,10 +58,10 @@ describe('loadConfig', () => {
     });
     expect(c.port).toBe(9000);
     expect(c.pin).toBe('4321');
-    expect(c.roots).toEqual(['D:\\a', 'D:\\b']);
-    expect(c.cacheDir).toBe('Z:\\cache');
+    expect(c.roots).toEqual([r('D:\\a'), r('D:\\b')]);
+    expect(c.cacheDir).toBe(r('Z:\\cache'));
     expect(c.cacheMaxBytes).toBe(Math.round(2.5 * 1024 ** 3));
-    expect(c.webDir).toBe('W:\\dist');
+    expect(c.webDir).toBe(r('W:\\dist'));
     expect(c.fakeMedia).toBe(true);
     expect(c.logLevel).toBe('debug');
     expect(c.gif).toEqual({ provider: 'auto', klipyKey: 'k', giphyKey: null });
@@ -82,7 +84,7 @@ describe('loadConfig', () => {
       dotenv: false,
       cwd,
     });
-    expect(c.vlc).toEqual({ exe: 'C:\\vlc\\vlc.exe', httpPort: 8090, httpPassword: 'pw', passwordConfigured: true });
+    expect(c.vlc).toEqual({ exe: r('C:\\vlc\\vlc.exe'), httpPort: 8090, httpPassword: 'pw', passwordConfigured: true });
     expect(c.hostAddrs).toEqual(['100.1.2.3', 'host.ts.net', '10.0.0.1']);
   });
 
