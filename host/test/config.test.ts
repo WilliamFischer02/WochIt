@@ -84,7 +84,8 @@ describe('loadConfig', () => {
       dotenv: false,
       cwd,
     });
-    expect(c.vlc).toEqual({ exe: r('C:\\vlc\\vlc.exe'), httpPort: 8090, httpPassword: 'pw', passwordConfigured: true });
+    // findVlc resolves against the process cwd, not the config cwd; on Windows both give C:\vlc\vlc.exe.
+    expect(c.vlc).toEqual({ exe: path.resolve('C:\\vlc\\vlc.exe'), httpPort: 8090, httpPassword: 'pw', passwordConfigured: true });
     expect(c.hostAddrs).toEqual(['100.1.2.3', 'host.ts.net', '10.0.0.1']);
   });
 
