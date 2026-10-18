@@ -1,0 +1,23 @@
+# dependencies / builds
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+
+# local config and secrets — never commit
+.env
+.env.*
+!.env.example
+
+# transcode cache, logs, chat logs
+.cache/
+host/.cache/
+host/logs/
+*.log
+
+# tooling
+.vercel/
+playwright-report/
+test-results/
+.DS_Store
+Thumbs.db

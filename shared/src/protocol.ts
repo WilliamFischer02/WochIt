@@ -1,0 +1,273 @@
+// The one source of truth for everything that crosses the wire between the host agent and the
+// web app. Both sides validate with these schemas. docs/PROTOCOL.md explains the semantics.
+// Change a message here first, then on both sides, then bump PROTOCOL_VERSION if it is breaking.
+import { z } from 'zod';
+
+export const PROTOCOL_VERSION = 1;
+
+// ------------------------------------------------------------------ primitives
+
+export const RenditionId = z.enum(['1080p', '720p', '480p', '360p']);
+export type RenditionId = z.infer<typeof RenditionId>;
+
+export const ReactionKind = z.enum(['cheer', 'boo', 'heart']);
+export type ReactionKind = z.infer<typeof ReactionKind>;
+
+/** Who drives the clock. vlc: VLC on the host PC is the master. browser: the host agent holds a
+ *  virtual clock and every browser follows it. none: nothing selected yet. */
+export const PlaybackSource = z.enum(['vlc', 'browser', 'none']);
+export type PlaybackSource = z.infer<typeof PlaybackSource>;
+
+export const ClientMode = z.enum(['auto', 'host', 'guest']);
+export type ClientMode = z.infer<typeof ClientMode>;
+
+export const Nick = z.string().trim().min(1).max(24);
+export const Pin = z.string().regex(/^\d{4,8}$/);
+
+// ------------------------------------------------------------------ media
+
+export const SubtitleTrack = z.object({
+  id: z.string(),
+  label: z.string(),
+  lang: z.string().nullable(),
+  kind: z.enum(['embedded', 'sidecar']),
+  /** WebVTT, relative to the host origin, already carrying the media token query. */
+  url: z.string(),
+  isDefault: z.boolean(),
+});
+export type SubtitleTrack = z.infer<typeof SubtitleTrack>;
+
+export const RenditionInfo = z.object({
+  id: RenditionId,
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  bitrateKbps: z.number().int().positive(),
+  /** Media playlist for this rendition alone (used for manual quality on iOS). */
+  playlistUrl: z.string(),
+});
+export type RenditionInfo = z.infer<typeof RenditionInfo>;
+
+export const MediaInfo = z.object({
+  /** Opaque, stable per file (hash of path + size + mtime). Never a filesystem path. */
+  id: z.string(),
+  title: z.string(),
+  durationSec: z.number().nonnegative(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  fps: z.number().positive().nullable(),
+  /** Master playlist listing every rendition; the default thing to hand hls.js / Safari. */
+  masterUrl: z.string(),
+  renditions: z.array(RenditionInfo).min(1),
+  subtitles: z.array(SubtitleTrack),
+  audioLabel: z.string().nullable(),
+  posterUrl: z.string().nullable(),
+});
+export type MediaInfo = z.infer<typeof MediaInfo>;
+
+// ------------------------------------------------------------------ room state
+
+export const PlaybackState = z.object({
+  /** Monotonic per room; clients ignore anything with a lower seq than they have. */
+  seq: z.number().int().nonnegative(),
+  source: PlaybackSource,
+  mediaId: z.string().nullable(),
+  playing: z.boolean(),
+  /** Seconds into the media at `updatedAt`. */
+  position: z.number().nonnegative(),
+  /** 1 for normal playback. Kept for completeness; the UI never exposes it. */
+  rate: z.number().positive(),
+  /** Host server clock, ms. Clients convert with their measured offset (see sync.ts). */
+  updatedAt: z.number(),
+});
+export type PlaybackState = z.infer<typeof PlaybackState>;
+
+export const Member = z.object({
+  id: z.string(),
+  nick: Nick,
+  isHost: z.boolean(),
+  typing: z.boolean(),
+});
+export type Member = z.infer<typeof Member>;
+
+export const Gif = z.object({
+  id: z.string(),
+  provider: z.literal('tenor'),
+  /** Full-size animated asset (gif or mp4 URL as returned by the provider). */
+  url: z.string(),
+  /** Small preview for the chat bubble and search grid. */
+  previewUrl: z.string(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  title: z.string().optional(),
+});
+export type Gif = z.infer<typeof Gif>;
+
+export const ChatMessage = z.object({
+  id: z.string(),
+  from: z.object({ id: z.string(), nick: z.string() }),
+  kind: z.enum(['text', 'gif', 'system']),
+  text: z.string().max(2000).optional(),
+  gif: Gif.optional(),
+  /** Host server clock, ms. */
+  at: z.number(),
+});
+export type ChatMessage = z.infer<typeof ChatMessage>;
+
+export const RoomSnapshot = z.object({
+  state: PlaybackState,
+  media: MediaInfo.nullable(),
+  members: z.array(Member),
+  recentChat: z.array(ChatMessage),
+});
+export type RoomSnapshot = z.infer<typeof RoomSnapshot>;
+
+export const TranscodeStatus = z.enum(['starting', 'running', 'done', 'error']);
+export type TranscodeStatus = z.infer<typeof TranscodeStatus>;
+
+// ------------------------------------------------------------------ client -> server
+
+export const C2S = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('hello'),
+    v: z.literal(PROTOCOL_VERSION),
+    pin: Pin,
+    nick: Nick,
+    /** Random id the client persists in localStorage so reconnects keep identity. */
+    clientId: z.string().min(8).max(64),
+    mode: ClientMode,
+  }),
+  z.object({ type: z.literal('ping'), t: z.number() }),
+  z.object({
+    type: z.literal('control'),
+    action: z.enum(['play', 'pause', 'toggle', 'seek']),
+    /** Required for seek: absolute seconds. */
+    position: z.number().nonnegative().optional(),
+  }),
+  z.object({
+    type: z.literal('chat'),
+    kind: z.enum(['text', 'gif']),
+    text: z.string().trim().min(1).max(2000).optional(),
+    gif: Gif.optional(),
+  }),
+  z.object({ type: z.literal('reaction'), kind: ReactionKind }),
+  z.object({ type: z.literal('nick'), nick: Nick }),
+  z.object({ type: z.literal('typing'), on: z.boolean() }),
+  /** Host only. Make this media the room's media (source becomes 'browser' unless VLC has it). */
+  z.object({ type: z.literal('select_media'), mediaId: z.string() }),
+  /** Host only. Launch VLC on the host PC with this media; source becomes 'vlc'. */
+  z.object({ type: z.literal('open_in_vlc'), mediaId: z.string() }),
+  /** Host only. Follow whatever VLC is playing (default) or stop following VLC. */
+  z.object({ type: z.literal('follow_vlc'), on: z.boolean() }),
+]);
+export type C2S = z.infer<typeof C2S>;
+
+// ------------------------------------------------------------------ server -> client
+
+export const ErrorCode = z.enum([
+  'bad_pin',
+  'bad_message',
+  'not_host',
+  'unknown_media',
+  'rate_limited',
+  'vlc_unreachable',
+  'transcode_failed',
+  'server_error',
+]);
+export type ErrorCode = z.infer<typeof ErrorCode>;
+
+export const S2C = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('welcome'),
+    v: z.literal(PROTOCOL_VERSION),
+    you: Member,
+    room: RoomSnapshot,
+    serverTime: z.number(),
+    /** Append as `?t=` on every /media/ URL (video elements cannot send headers). */
+    mediaToken: z.string(),
+    gifSearchAvailable: z.boolean(),
+    vlc: z.object({ connected: z.boolean(), following: z.boolean() }),
+  }),
+  z.object({ type: z.literal('pong'), t: z.number(), serverTime: z.number() }),
+  z.object({ type: z.literal('state'), state: PlaybackState }),
+  z.object({ type: z.literal('media'), media: MediaInfo.nullable() }),
+  z.object({ type: z.literal('chat'), message: ChatMessage }),
+  z.object({
+    type: z.literal('reaction'),
+    kind: ReactionKind,
+    from: z.object({ id: z.string(), nick: z.string() }),
+    at: z.number(),
+  }),
+  z.object({ type: z.literal('presence'), members: z.array(Member) }),
+  z.object({
+    type: z.literal('transcode'),
+    mediaId: z.string(),
+    rendition: RenditionId,
+    status: TranscodeStatus,
+    /** Seconds of media rendered so far for this rendition, when known. */
+    readyToSec: z.number().nonnegative().optional(),
+    message: z.string().optional(),
+  }),
+  z.object({ type: z.literal('vlc'), connected: z.boolean(), following: z.boolean() }),
+  z.object({ type: z.literal('error'), code: ErrorCode, message: z.string() }),
+]);
+export type S2C = z.infer<typeof S2C>;
+
+// ------------------------------------------------------------------ REST shapes
+
+export const HealthResponse = z.object({
+  ok: z.literal(true),
+  version: z.string(),
+  protocol: z.literal(PROTOCOL_VERSION),
+  source: PlaybackSource,
+  vlc: z.object({ connected: z.boolean() }),
+  ffmpeg: z.object({ found: z.boolean(), encoder: z.string().nullable() }),
+  gifSearchAvailable: z.boolean(),
+});
+export type HealthResponse = z.infer<typeof HealthResponse>;
+
+/** Host-only library browsing. Paths are shown relative to a root and never leave the host PC. */
+export const LibraryEntry = z.object({
+  kind: z.enum(['dir', 'file']),
+  /** Opaque id for dirs and files alike; files' ids are MediaInfo ids. */
+  id: z.string(),
+  name: z.string(),
+  /** e.g. "Plex Movies / Dune (2021)" — display only. */
+  displayPath: z.string(),
+  sizeBytes: z.number().nonnegative().optional(),
+  durationSec: z.number().nonnegative().optional(),
+});
+export type LibraryEntry = z.infer<typeof LibraryEntry>;
+
+export const LibraryResponse = z.object({
+  parentId: z.string().nullable(),
+  entries: z.array(LibraryEntry),
+});
+export type LibraryResponse = z.infer<typeof LibraryResponse>;
+
+export const GifSearchResponse = z.object({
+  results: z.array(Gif),
+  next: z.string().nullable(),
+});
+export type GifSearchResponse = z.infer<typeof GifSearchResponse>;
+
+// ------------------------------------------------------------------ constants both sides share
+
+/** HLS segment length in seconds. Segment k of any rendition covers [k*SEG, (k+1)*SEG). */
+export const HLS_SEGMENT_SEC = 4;
+
+/** The rendition ladder, tallest first. The host drops rungs taller than the source. */
+export const RENDITION_LADDER: ReadonlyArray<{ id: RenditionId; height: number; bitrateKbps: number }> = [
+  { id: '1080p', height: 1080, bitrateKbps: 5200 },
+  { id: '720p', height: 720, bitrateKbps: 2800 },
+  { id: '480p', height: 480, bitrateKbps: 1400 },
+  { id: '360p', height: 360, bitrateKbps: 800 },
+];
+
+export const REACTION_EMOJI: Record<ReactionKind, readonly string[]> = {
+  cheer: ['👏', '🎉', '🥳', '🎊', '✨'],
+  boo: ['🍅', '👎', '😤', '🙄'],
+  heart: ['❤️', '💖', '💗', '💕', '😍', '💞'],
+};
+
+/** Minimum gap between two reactions from one member, ms. The host enforces it too. */
+export const REACTION_MIN_GAP_MS = 400;
