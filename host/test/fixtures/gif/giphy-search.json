@@ -1,0 +1,115 @@
+{
+  "data": [
+    {
+      "type": "gif",
+      "id": "xT9IgzoKnwFNmISR8I",
+      "url": "https://giphy.com/gifs/popcorn-michael-jackson-eating-xT9IgzoKnwFNmISR8I",
+      "slug": "popcorn-michael-jackson-eating-xT9IgzoKnwFNmISR8I",
+      "bitly_gif_url": "https://gph.is/1Vj2Mkd",
+      "embed_url": "https://giphy.com/embed/xT9IgzoKnwFNmISR8I",
+      "username": "",
+      "source": "",
+      "title": "Michael Jackson Popcorn GIF",
+      "rating": "g",
+      "content_url": "",
+      "import_datetime": "2015-09-23 20:23:27",
+      "trending_datetime": "0000-00-00 00:00:00",
+      "images": {
+        "original": {
+          "height": "270",
+          "width": "480",
+          "size": "1234567",
+          "url": "https://media2.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.gif?cid=abc123&rid=giphy.gif&ct=g",
+          "mp4_size": "456789",
+          "mp4": "https://media2.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.mp4?cid=abc123&rid=giphy.mp4&ct=g",
+          "webp_size": "345678",
+          "webp": "https://media2.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.webp?cid=abc123&rid=giphy.webp&ct=g",
+          "frames": "60",
+          "hash": "0123456789abcdef"
+        },
+        "downsized_medium": {
+          "height": "270",
+          "width": "480",
+          "size": "987654",
+          "url": "https://media2.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy-downsized-medium.gif?cid=abc123&rid=giphy-downsized-medium.gif&ct=g"
+        },
+        "fixed_width": {
+          "height": "113",
+          "width": "200",
+          "size": "98765",
+          "url": "https://media2.giphy.com/media/xT9IgzoKnwFNmISR8I/200w.gif?cid=abc123&rid=200w.gif&ct=g",
+          "mp4_size": "23456",
+          "mp4": "https://media2.giphy.com/media/xT9IgzoKnwFNmISR8I/200w.mp4?cid=abc123&rid=200w.mp4&ct=g",
+          "webp_size": "34567",
+          "webp": "https://media2.giphy.com/media/xT9IgzoKnwFNmISR8I/200w.webp?cid=abc123&rid=200w.webp&ct=g"
+        },
+        "fixed_width_small": {
+          "height": "57",
+          "width": "100",
+          "size": "34567",
+          "url": "https://media2.giphy.com/media/xT9IgzoKnwFNmISR8I/100w.gif?cid=abc123&rid=100w.gif&ct=g",
+          "mp4_size": "12345",
+          "mp4": "https://media2.giphy.com/media/xT9IgzoKnwFNmISR8I/100w.mp4?cid=abc123&rid=100w.mp4&ct=g",
+          "webp_size": "23456",
+          "webp": "https://media2.giphy.com/media/xT9IgzoKnwFNmISR8I/100w.webp?cid=abc123&rid=100w.webp&ct=g"
+        },
+        "preview_gif": {
+          "height": "98",
+          "width": "174",
+          "size": "49999",
+          "url": "https://media2.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy-preview.gif?cid=abc123&rid=giphy-preview.gif&ct=g"
+        }
+      },
+      "analytics_response_payload": "e=Z2lmX2lkPXhUOUlnem9Lbn",
+      "analytics": {
+        "onload": { "url": "https://giphy-analytics.giphy.com/v2/pingback_simple?analytics_response_payload=e%3DZ2lm&action_type=SEEN" },
+        "onclick": { "url": "https://giphy-analytics.giphy.com/v2/pingback_simple?analytics_response_payload=e%3DZ2lm&action_type=CLICK" },
+        "onsent": { "url": "https://giphy-analytics.giphy.com/v2/pingback_simple?analytics_response_payload=e%3DZ2lm&action_type=SENT" }
+      }
+    },
+    {
+      "type": "gif",
+      "id": "l0HlQoLBEO3LrjXwI",
+      "url": "https://giphy.com/gifs/popcorn-l0HlQoLBEO3LrjXwI",
+      "slug": "popcorn-l0HlQoLBEO3LrjXwI",
+      "title": "Popcorn Eating GIF",
+      "rating": "pg",
+      "images": {
+        "original": {
+          "height": "360",
+          "width": "480",
+          "size": "2222222",
+          "url": "https://media0.giphy.com/media/l0HlQoLBEO3LrjXwI/giphy.gif?cid=abc123&rid=giphy.gif&ct=g"
+        },
+        "fixed_width": {
+          "height": "150",
+          "width": "200",
+          "size": "77777",
+          "url": "https://media0.giphy.com/media/l0HlQoLBEO3LrjXwI/200w.gif?cid=abc123&rid=200w.gif&ct=g"
+        },
+        "preview_gif": {
+          "height": "128",
+          "width": "171",
+          "size": "48888",
+          "url": "https://media0.giphy.com/media/l0HlQoLBEO3LrjXwI/giphy-preview.gif?cid=abc123&rid=giphy-preview.gif&ct=g"
+        }
+      }
+    },
+    {
+      "type": "gif",
+      "id": "broken-no-images",
+      "title": "Unusable",
+      "images": {}
+    }
+  ],
+  "pagination": {
+    "total_count": 4872,
+    "count": 3,
+    "offset": 24
+  },
+  "meta": {
+    "status": 200,
+    "msg": "OK",
+    "response_id": "0123456789abcdef0123456789abcdef"
+  }
+}

@@ -71,6 +71,12 @@ export interface MediaService {
   getMedia(mediaId: string): Promise<MediaInfo | null>;
 
   /**
+   * Absolute filesystem path for an id this service has handed out, or null. Host-only use:
+   * the room needs it to launch VLC on a library-selected file. Never sent to clients.
+   */
+  getPath(mediaId: string): Promise<string | null>;
+
+  /**
    * Playlists are generated, never read from disk. `tokenQuery` is the exact string to append
    * to every URI inside the playlist (e.g. `?t=abc123`), since hls.js resolves segment URIs
    * relative to the playlist URL and would otherwise lose the token.

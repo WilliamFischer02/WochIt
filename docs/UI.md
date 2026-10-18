@@ -106,7 +106,7 @@ Left column, top to bottom:
   when there is text.
 - GIF panel: replaces the picker area, search field autofocus, grid of 2 columns (3 on desktop)
   of `previewUrl`s with aspect-correct heights, infinite scroll via `next`, "Featured" when the
-  query is empty, tap sends immediately. "Powered by Tenor" footer. If `gifSearchAvailable` is
+  query is empty, tap sends immediately. placeholder "Search KLIPY" (required by Klipy) or "Search GIPHY"; "Powered by KLIPY/GIPHY" footer from `GifSearchResponse.provider`. If `gifSearchAvailable` is
   false: friendly empty state with the one-line setup pointer.
 - Unread: count messages received while the drawer is tucked; badge on the toggle; clear on open.
 - Typing: send `typing on` on first keystroke, `off` after 2 s idle or send.

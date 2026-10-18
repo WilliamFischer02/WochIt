@@ -68,11 +68,15 @@ Android Chrome support is uneven and AV1 in HLS is not something Safari plays. H
 plays on everything she might hold. Revisit when the guest device is known to be an iPhone and
 bandwidth is the limiting factor.
 
-## 2026-10-18 — Tenor for GIFs
+## 2026-10-18 — Klipy (then GIPHY) for GIFs, not Tenor
 
-Tenor v2 (Google) has a free key, a clean JSON API, content filtering, and is what Gboard and
-Discord use. GIPHY works too but its free tier is "beta" rate-limited. Proxied through the host
-so the key never reaches the browser and so chat GIF URLs can be restricted to Tenor's CDN.
+The first draft said Tenor. The docs agent checked and Google sunset the Tenor API on
+2026-06-30 (no new keys since 2026-01-13; https://support.google.com/tenor/answer/10455265).
+Discord, Minnit and others moved to Klipy, which offers a free developer API with search,
+trending, content rating and a Tenor migration guide. GIPHY remains as the second provider:
+its beta keys are free but capped at 100 calls/hour and production keys are paid. The host
+hides the provider behind one interface and one pair of routes, proxies it so no key reaches
+the browser, and restricts chat GIF URLs to the chosen providers' CDN hosts.
 
 ## 2026-10-18 — Repo and deploy shape
 

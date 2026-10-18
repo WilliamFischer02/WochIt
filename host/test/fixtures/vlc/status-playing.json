@@ -1,0 +1,80 @@
+{
+  "fullscreen": false,
+  "stats": {
+    "inputbitrate": 0.1111932694912,
+    "sentbytes": 0,
+    "lostabuffers": 0,
+    "averagedemuxbitrate": 0,
+    "readpackets": 33,
+    "demuxreadpackets": 0,
+    "lostpictures": 0,
+    "displayedpictures": 14,
+    "sentpackets": 0,
+    "demuxreadbytes": 152740,
+    "demuxbitrate": 0.090973801910877,
+    "playedabuffers": 113,
+    "demuxdiscontinuity": 2,
+    "decodedaudio": 227,
+    "sendbitrate": 0,
+    "readbytes": 170449,
+    "averageinputbitrate": 0,
+    "demuxcorrupted": 0,
+    "decodedvideo": 63
+  },
+  "aspectratio": "default",
+  "seek_sec": 10,
+  "apiversion": 3,
+  "currentplid": 3,
+  "time": 1,
+  "volume": 0,
+  "length": 30,
+  "random": false,
+  "audiofilters": {
+    "filter_0": ""
+  },
+  "information": {
+    "chapter": 0,
+    "chapters": [],
+    "title": 0,
+    "category": {
+      "Stream 0": {
+        "Frame_rate": "15",
+        "Decoded_format": "",
+        "Buffer_dimensions": "320x192",
+        "Type": "Video",
+        "Chroma_location": "Left",
+        "Orientation": "Top left",
+        "Video_resolution": "320x180",
+        "Codec": "H264 - MPEG-4 AVC (part 10) (avc1)"
+      },
+      "Stream 1": {
+        "Codec": "MPEG AAC Audio (mp4a)",
+        "Channels": "Stereo",
+        "Bits_per_sample": "32",
+        "Type": "Audio",
+        "Sample_rate": "48000 Hz"
+      },
+      "meta": {
+        "encoded_by": "Lavf63.1.102",
+        "filename": "fixture clip.mp4"
+      }
+    },
+    "titles": []
+  },
+  "rate": 1,
+  "videoeffects": {
+    "hue": 0,
+    "saturation": 1,
+    "contrast": 1,
+    "brightness": 1,
+    "gamma": 1
+  },
+  "state": "playing",
+  "loop": true,
+  "version": "3.0.21 Vetinari",
+  "position": 0.038366667926311,
+  "audiodelay": 0,
+  "repeat": false,
+  "subtitledelay": 0,
+  "equalizer": []
+}

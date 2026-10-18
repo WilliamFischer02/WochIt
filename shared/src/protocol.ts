@@ -91,7 +91,7 @@ export type Member = z.infer<typeof Member>;
 
 export const Gif = z.object({
   id: z.string(),
-  provider: z.literal('tenor'),
+  provider: z.enum(['klipy', 'giphy']),
   /** Full-size animated asset (gif or mp4 URL as returned by the provider). */
   url: z.string(),
   /** Small preview for the chat bubble and search grid. */
@@ -222,6 +222,10 @@ export const HealthResponse = z.object({
   vlc: z.object({ connected: z.boolean() }),
   ffmpeg: z.object({ found: z.boolean(), encoder: z.string().nullable() }),
   gifSearchAvailable: z.boolean(),
+  /** Transcode cache usage, for the host footer. */
+  cache: z.object({ usedBytes: z.number().nonnegative(), maxBytes: z.number().nonnegative() }).optional(),
+  /** URLs the host believes it is reachable at (local, tailnet), for the host footer's copy buttons. */
+  urls: z.array(z.string()).optional(),
 });
 export type HealthResponse = z.infer<typeof HealthResponse>;
 
@@ -245,6 +249,7 @@ export const LibraryResponse = z.object({
 export type LibraryResponse = z.infer<typeof LibraryResponse>;
 
 export const GifSearchResponse = z.object({
+  provider: z.enum(['klipy', 'giphy']),
   results: z.array(Gif),
   next: z.string().nullable(),
 });

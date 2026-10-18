@@ -1,0 +1,18 @@
+# Text files are stored with LF and checked out with LF, whatever core.autocrlf says.
+* text=auto eol=lf
+
+# Windows scripts need CRLF in the working tree.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary: never touch line endings, never diff as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.woff2 binary
+*.mkv binary
+*.mp4 binary
+# MPEG-TS segments (seg00042.ts). Not "*.ts": that would turn every TypeScript file binary.
+seg[0-9][0-9][0-9][0-9][0-9].ts binary

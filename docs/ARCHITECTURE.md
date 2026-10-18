@@ -28,7 +28,7 @@ Three packages, one repo:
 | package | runs where | job |
 |---|---|---|
 | `shared` | both | zod schemas for every message, sync math |
-| `host` | host PC only | HTTP + WebSocket server, media pipeline, VLC bridge, room, Tenor proxy, serves `web/dist` |
+| `host` | host PC only | HTTP + WebSocket server, media pipeline, VLC bridge, room, GIF proxy, serves `web/dist` |
 | `web` | any browser | the whole UI; connects to the host over WebSocket and plays HLS from it |
 
 There is no cloud backend. Vercel hosts a copy of `web/dist` as a public landing page that asks
@@ -119,6 +119,17 @@ here too" toggle exists for testing.
    `libx264` fallback: `-preset veryfast -crf 23 -sc_threshold 0` in place of the nvenc flags.
    `h264_qsv` / `h264_amf` may be added behind `WOCHIT_ENCODER`.
 
+   **What the measurements changed (2026-10-18, see `host/src/media/transcoder.ts` for the
+   command actually run):** `-forced-idr 1` for NVENC (otherwise forced keyframes are non-IDR
+   and the muxer cuts 8 s segments); `-hls_segment_options mpegts_copyts=1` (otherwise the TS
+   muxer adds its 1.4 s delay and segment 10 starts at 41.4 s); `-bf 0` (B-frames shift a job
+   that starts at t=0 by two frames, so segments from different jobs disagreed by 67 ms);
+   `-af atrim=start=0.0215` on the k=0 job (AAC priming packet otherwise shifts that job by one
+   audio frame); `scale=W:H,setsar=1,format=yuv420p` (anamorphic and 10-bit sources); audio is
+   always re-encoded (stream copy drags pre-seek audio into the first segment); jobs skip runs of
+   already-cached segments instead of re-encoding to the end. With these, segment k from any job
+   starts at exactly k·4.000 s (Δ 0.000 between a k=10 job and a k=0 job).
+
    **Verify, don't trust.** The media agent must generate a test file
    (`ffmpeg -f lavfi -i testsrc2=size=1280x720:rate=30 -f lavfi -i sine=frequency=440 -t 90 ...`,
    with a burned-in timecode via `drawtext`), start a job at k=10, and check with
@@ -148,8 +159,8 @@ here too" toggle exists for testing.
 - `state` is broadcast on every change and as a heartbeat every 1000 ms while playing (VLC poll
   position), so a client that missed a message converges within a second.
 - `reaction` → rate limit `REACTION_MIN_GAP_MS` per member, broadcast with `from`.
-- `chat` → assign id and `at`, validate `gif.url` host is `media.tenor.com` /
-  `c.tenor.com` (no arbitrary image URLs), broadcast, log.
+- `chat` → assign id and `at`, validate `gif.url` is https and its host belongs
+  to Klipy (`*.klipy.com`) or GIPHY (`*.giphy.com`); no arbitrary image URLs, broadcast, log.
 - `nick` → update member, broadcast `presence`, post a `system` chat line "A is now B".
 - `select_media` / `open_in_vlc` / `follow_vlc` → host members only (`not_host` otherwise).
 - Disconnect → remove member, broadcast `presence`. Reconnect with the same `clientId` reuses the
@@ -192,10 +203,19 @@ on the host PC / I'm a guest" switch on the connect screen for the rare misdetec
 
 ## GIFs (host/src/gif, web chat)
 
-Tenor v2 through the host (`/api/gif/search?q=&pos=&limit=24`, `/api/gif/featured`), key from
-`.env`, `client_key=wochit`, `media_filter=gif,tinygif,tinymp4`, `contentfilter=medium`. The host
-normalises to `Gif` using `tinygif` as `previewUrl` and `gif` as `url`. If no key:
-`gifSearchAvailable: false` in `welcome` and the GIF button explains how to add one.
+Google shut down the Tenor API on 2026-06-30, so the host proxies **Klipy** (free developer API,
+`https://api.klipy.com/api/v1/<key>/gifs/search|trending`) or **GIPHY** (beta keys free but capped
+at 100 calls/hour) behind one interface: `/api/gif/search?q=&pos=&limit=24` and
+`/api/gif/featured?pos=&limit=`. `WOCHIT_GIF_PROVIDER=auto` picks Klipy when `KLIPY_API_KEY` is
+set, else GIPHY when `GIPHY_API_KEY` is set. The host calls Klipy with `content_filter=medium` and
+`format_filter=gif,webp,mp4`, normalises to `Gif` (`previewUrl` = `file.sm.gif`, `url` =
+`file.md.gif`), maps `has_next` to an opaque `next` page string, caches queries for 60 s (featured
+for 5 min) because testing-mode keys allow 100 requests/hour, and stamps
+`GifSearchResponse.provider` so the panel shows the right attribution. Klipy requires the search
+box placeholder to read exactly "Search KLIPY"; "Powered by KLIPY" is optional and shown in the
+panel footer. Chat GIF URLs
+are accepted only from those providers' CDN hosts. With no key: `gifSearchAvailable: false` in
+`welcome` and the GIF button explains how to add one.
 
 ## Reactions (web/src/features/reactions)
 
@@ -216,14 +236,14 @@ encoder, VLC bridge status, cache dir and size. `--pin`, `--port`, `--roots` CLI
 
 - `shared`: vitest on `sync.ts` (expectedPosition, driftAction thresholds, ClockSync median).
 - `host`: vitest on virtual playlist generation, ladder selection, VLC status parsing (fixtures),
-  host detection table, protocol validation, media token, Tenor normalisation.
+  host detection table, protocol validation, media token, GIF provider normalisation (Klipy and GIPHY fixtures).
 - `web`: vitest for the sync controller (fake video element), chat reducer, reaction scheduler.
 - e2e (`web/e2e`, Playwright, Chromium): build everything, generate a 60 s test video with
   ffmpeg, start the host with `--pin 123456 --roots <tmp>` in `browser` source, open
   `/?mode=host` and `/?mode=guest`, select the media on the host tab, play, assert the guest's
   `currentTime` tracks within 0.5 s after 5 s, pause from the guest and assert the host's state,
   seek to 30 s from the guest and assert playback resumes at 30 ±0.5, send a text and a GIF
-  (mock Tenor) each way, fire a reaction and assert the canvas has pixels and the toast shows.
+  (mock GIF API) each way, fire a reaction and assert the canvas has pixels and the toast shows.
 
 ## File ownership for the build agents
 

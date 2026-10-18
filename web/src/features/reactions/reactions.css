@@ -1,0 +1,65 @@
+/* Reactions overlay. Stacking: the canvas and the toasts use var(--z-reactions, 40), which sits
+   above the video and its controls and below the landscape chat drawer
+   (var(--z-chat-drawer, 50)) and the GIF lightbox (var(--z-lightbox, 70)). Override any of them
+   on :root from the app shell. --reactions-toast-bottom moves the toast stack. */
+
+.wc-reactions-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: var(--z-reactions, 40);
+}
+
+.wc-reaction-toasts {
+  position: fixed;
+  left: 50%;
+  bottom: var(--reactions-toast-bottom, calc(env(safe-area-inset-bottom, 0px) + 96px));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  z-index: var(--z-reactions, 40);
+}
+
+.wc-reaction-toast {
+  animation: wc-toast 1.4s ease-out both;
+}
+
+@keyframes wc-toast {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  12% {
+    opacity: 1;
+    transform: none;
+  }
+  82% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wc-reaction-toast {
+    animation-name: wc-toast-fade;
+  }
+  @keyframes wc-toast-fade {
+    0%,
+    100% {
+      opacity: 0;
+    }
+    10%,
+    85% {
+      opacity: 1;
+    }
+  }
+}

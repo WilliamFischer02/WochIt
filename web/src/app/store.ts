@@ -28,6 +28,8 @@ export interface AppState {
   /** Last error from the server, cleared on the next welcome. */
   lastError: { code: ErrorCode; message: string } | null;
   hostOrigin: string | null;
+  /** The room PIN the user joined with; needed as `x-wochit-pin` on REST calls (library, gifs). */
+  pin: string | null;
   view: View;
   /** Host-clock minus local-clock, ms. Set by the sync controller from ClockSync. */
   serverOffset: number;
@@ -55,8 +57,10 @@ export interface AppState {
   setSocket(socket: WochitSocket | null): void;
   setSocketStatus(s: SocketStatus): void;
   setHostOrigin(origin: string | null): void;
+  setPin(pin: string | null): void;
   setView(v: View): void;
   setServerOffset(ms: number): void;
+  setLastError(err: { code: ErrorCode; message: string } | null): void;
   /** Proxy to the socket; false when not connected. */
   send(msg: C2S): boolean;
   /** The single reducer for server messages. */
@@ -74,6 +78,7 @@ const initial = {
   socketStatus: 'idle' as SocketStatus,
   lastError: null,
   hostOrigin: null,
+  pin: null,
   view: 'connect' as View,
   serverOffset: 0,
   you: null,
@@ -94,8 +99,10 @@ export const useApp = create<AppState>((set, get) => ({
   setSocket: (socket) => set({ socket }),
   setSocketStatus: (socketStatus) => set({ socketStatus }),
   setHostOrigin: (hostOrigin) => set({ hostOrigin }),
+  setPin: (pin) => set({ pin }),
   setView: (view) => set({ view }),
   setServerOffset: (serverOffset) => set({ serverOffset }),
+  setLastError: (lastError) => set({ lastError }),
 
   send: (msg) => get().socket?.send(msg) ?? false,
 

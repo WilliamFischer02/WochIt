@@ -1,0 +1,156 @@
+@import "tailwindcss";
+
+/* Tokens from docs/UI.md. Tailwind v4 reads these as utilities: bg-bg, text-muted, bg-surface-2,
+   border-line, rounded-xl (20px), rounded-pill, font-sans … */
+@theme {
+  --color-bg: #0b0b10;
+  --color-surface: #14141c;
+  --color-surface-2: #1c1c27;
+  --color-line: rgba(255, 255, 255, 0.08);
+  --color-text: #f2f2f7;
+  --color-muted: #9a9ab0;
+  --color-accent: #8b5cf6;
+  --color-accent-2: #f472b6;
+  --color-ok: #34d399;
+  --color-warn: #fbbf24;
+  --color-bad: #f87171;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+  --font-sans: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --animate-fade-in: fade-in 180ms ease-out both;
+  --animate-slide-up: slide-up 200ms ease-out both;
+  --animate-bounce-once: bounce-once 120ms ease-out;
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes slide-up {
+    from { transform: translateY(16px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  @keyframes bounce-once {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.18); }
+    100% { transform: scale(1); }
+  }
+}
+
+/* Layout breakpoints as variants: `desktop:` ≥ 900 px, `phone-landscape:` a phone on its side,
+   `touch:` no hover (phones/tablets), `fine:` mouse + hover (desktop). */
+@custom-variant desktop (@media (min-width: 900px));
+@custom-variant phone-landscape (@media (orientation: landscape) and (max-width: 899px));
+@custom-variant touch (@media (hover: none));
+@custom-variant fine (@media (hover: hover) and (pointer: fine));
+
+@utility glass {
+  background-color: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45);
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+@utility safe-x {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+@utility safe-t {
+  padding-top: env(safe-area-inset-top);
+}
+@utility safe-b {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@utility tap {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+    min-height: 100dvh;
+  }
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  button {
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+  }
+  input, textarea {
+    font: inherit;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  /* Subtitle cue sizing: S/M/L via a class on the <video>. */
+  video::cue {
+    background: rgba(0, 0, 0, 0.65);
+    color: #fff;
+    font-family: var(--font-sans);
+    line-height: 1.3;
+  }
+  video.cue-s::cue { font-size: 0.8em; }
+  video.cue-m::cue { font-size: 1.1em; }
+  video.cue-l::cue { font-size: 1.55em; }
+}
+
+/* Motion: 160–220 ms ease-out everywhere; reduced motion drops slides and keeps fades. */
+.motion {
+  transition-property: transform, opacity, width, height, background-color, color;
+  transition-duration: 200ms;
+  transition-timing-function: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .motion { transition-duration: 0ms; }
+  .animate-slide-up { animation: none; }
+  .animate-bounce-once { animation: none; }
+}
+
+/* Scrubber knob grows while dragging. */
+.scrubber-knob {
+  width: 14px;
+  height: 14px;
+  transition: width 120ms ease-out, height 120ms ease-out;
+}
+.scrubber[data-dragging="true"] .scrubber-knob {
+  width: 20px;
+  height: 20px;
+}
+
+/* Thin range input for the desktop volume slider. */
+input[type="range"].volume {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  outline: none;
+}
+input[type="range"].volume::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+}
+input[type="range"].volume::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+}

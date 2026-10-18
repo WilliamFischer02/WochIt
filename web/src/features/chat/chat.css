@@ -1,0 +1,116 @@
+/* Chat drawer styles that Tailwind utilities do not cover well: scrollbars, the emoji picker's
+   custom properties, the lightbox fade, and the hover/long-press timestamp. Colours come from the
+   theme tokens in web/src/app/theme.css. */
+
+.wc-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.wc-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.wc-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+}
+
+/* Timestamp: hidden until hover (pointer devices) or long-press (data-show). */
+.wc-time {
+  opacity: 0;
+  transition: opacity 140ms ease-out;
+  pointer-events: none;
+}
+@media (hover: hover) {
+  .wc-row:hover .wc-time {
+    opacity: 1;
+  }
+}
+.wc-row[data-show='true'] .wc-time {
+  opacity: 1;
+}
+
+.wc-media {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* emoji-picker-element, dark theme blended into the drawer. */
+emoji-picker.wc-emoji {
+  width: 100%;
+  height: 100%;
+  --background: transparent;
+  --border-color: transparent;
+  --border-size: 0;
+  --indicator-color: var(--color-accent, #8b5cf6);
+  --input-border-color: rgba(255, 255, 255, 0.12);
+  --input-font-color: var(--color-text, #f2f2f7);
+  --input-placeholder-color: var(--color-muted, #9a9ab0);
+  --input-border-radius: 999px;
+  --input-font-size: 16px;
+  --input-padding: 0.45rem 0.85rem;
+  --outline-color: var(--color-accent, #8b5cf6);
+  --button-hover-background: rgba(255, 255, 255, 0.08);
+  --button-active-background: rgba(255, 255, 255, 0.14);
+  --category-font-color: var(--color-muted, #9a9ab0);
+  --category-font-size: 0.75rem;
+  --emoji-size: 1.45rem;
+  --emoji-padding: 0.4rem;
+  --num-columns: 8;
+}
+
+.wc-fade-in {
+  animation: wc-fade-in 160ms ease-out;
+}
+@keyframes wc-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.wc-pop-in {
+  animation: wc-pop-in 200ms ease-out;
+}
+@keyframes wc-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wc-fade-in,
+  .wc-pop-in {
+    animation: none;
+  }
+  .wc-time {
+    transition: none;
+  }
+}
+
+.wc-skeleton {
+  background: linear-gradient(100deg, rgba(255, 255, 255, 0.04) 30%, rgba(255, 255, 255, 0.09) 50%, rgba(255, 255, 255, 0.04) 70%);
+  background-size: 300% 100%;
+  animation: wc-shimmer 1.4s linear infinite;
+}
+@keyframes wc-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wc-skeleton {
+    animation: none;
+  }
+}

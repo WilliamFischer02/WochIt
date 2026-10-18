@@ -21,3 +21,7 @@ playwright-report/
 test-results/
 .DS_Store
 Thumbs.db
+
+# screenshots from dev harnesses and e2e runs (large PNGs; regenerate locally)
+web/src/features/chat/__dev__/screenshots/
+web/e2e/screenshots/

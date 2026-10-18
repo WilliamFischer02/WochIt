@@ -12,7 +12,7 @@ new reason written down there.
   math. **The single source of truth for the wire protocol.** Build it (`pnpm --filter
   @wochit/shared build`) after editing; host and web import its `dist`.
 - `host/` — `@wochit/host`. Node 22+ TypeScript. Serves the built web app, HLS media, the
-  WebSocket room, the VLC bridge and the Tenor proxy. Runs only on the host PC.
+  WebSocket room, the VLC bridge and the GIF proxy (Klipy or GIPHY). Runs only on the host PC.
 - `web/` — `@wochit/web`. Vite + React 19 + TypeScript + Tailwind v4. Static. Served by the host
   at `/` and mirrored on Vercel as a public connect page.
 - `docs/` — architecture, protocol, UI spec, decisions, setup.
@@ -20,10 +20,10 @@ new reason written down there.
 ## Hard rules
 
 1. **No secrets in git.** `.env` is ignored; `.env.example` documents every key with a safe
-   default. The Tenor key and the VLC password live only in `.env`.
+   default. The GIF API key and the VLC password live only in `.env`.
 2. **Guests never learn filesystem paths.** Media is addressed by opaque `MediaInfo.id`. The
    library browser is host-only and shows paths relative to a configured root.
-3. **The host agent never fetches from the internet except the Tenor API** (and only when a key
+3. **The host agent never fetches from the internet except the GIF API (Klipy or GIPHY)** (and only when a key
    is configured). No telemetry, no update checks.
 4. **Protocol changes go through `shared/src/protocol.ts` first**, then both sides, with a
    `PROTOCOL_VERSION` bump if breaking. Never hand-write a message shape in host or web.

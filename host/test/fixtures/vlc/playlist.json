@@ -1,0 +1,32 @@
+{
+  "ro": "rw",
+  "type": "node",
+  "name": "",
+  "id": "0",
+  "children": [
+    {
+      "ro": "ro",
+      "type": "node",
+      "name": "Playlist",
+      "id": "1",
+      "children": [
+        {
+          "ro": "rw",
+          "type": "leaf",
+          "name": "fixture clip.mp4",
+          "id": "3",
+          "duration": 30,
+          "uri": "file:///C:/Users/wills/Videos/fixture%20clip.mp4",
+          "current": "current"
+        }
+      ]
+    },
+    {
+      "ro": "ro",
+      "type": "node",
+      "name": "Media Library",
+      "id": "2",
+      "children": []
+    }
+  ]
+}
