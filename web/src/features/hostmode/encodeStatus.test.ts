@@ -4,8 +4,8 @@ import { encodeStatus } from './encodeStatus';
 const FILM = 6800; // 1:53:20
 
 describe('encodeStatus', () => {
-  it('says nothing before any transcode message', () => {
-    expect(encodeStatus({}, FILM)).toBeNull();
+  it('says Ready before any transcode message (cache or on-demand encode)', () => {
+    expect(encodeStatus({}, FILM)).toEqual({ tone: 'ok', text: 'Ready' });
   });
   it('reports the running rendition with ready-of-total times', () => {
     expect(encodeStatus({ '720p': { status: 'running', readyToSec: 1930 } }, FILM)).toEqual({ tone: 'warn', text: 'Encoding 720p · 32:10 ready of 1:53:20' });

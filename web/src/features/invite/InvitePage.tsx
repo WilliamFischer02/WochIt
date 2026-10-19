@@ -9,6 +9,8 @@ import Logo from '../../app/Logo';
 import { detectPlatform, loadProgress, openWochitUrl, probeHost, saveProgress, storeFor, type StepId } from './invite';
 
 const PROBE_EVERY_MS = 3000;
+/** After this many failed probes the page also offers "Open WochIt anyway" (see step 4). */
+const PROBES_BEFORE_FALLBACK = 3;
 
 function StepCard({
   id,
@@ -222,10 +224,26 @@ function Steps({ params }: { params: InviteParams }) {
                 </a>
               </>
             ) : (
-              <p className="flex items-center gap-2" data-testid="invite-probe" data-probes={probes} aria-live="polite">
-                <LoaderCircle size={16} className="shrink-0 animate-spin" aria-hidden="true" />
-                <span>Looking for {name}'s PC… make sure Tailscale is on.</span>
-              </p>
+              <>
+                <p className="flex items-center gap-2" data-testid="invite-probe" data-probes={probes} aria-live="polite">
+                  <LoaderCircle size={16} className="shrink-0 animate-spin" aria-hidden="true" />
+                  <span>Looking for {name}'s PC… make sure Tailscale is on.</span>
+                </p>
+                {probes >= PROBES_BEFORE_FALLBACK && (
+                  // Chrome (not Safari) may refuse to let a public page probe a private address at all.
+                  // The WochIt page itself is same-origin on the tailnet, so opening it works regardless.
+                  <>
+                    <a
+                      href={openWochitUrl(params.h)}
+                      data-testid="invite-open-anyway"
+                      className="tap mt-3 flex w-full items-center justify-center gap-2 rounded-pill border border-line bg-surface-2 px-5 py-4 text-base font-semibold text-text motion hover:bg-white/10 active:scale-[.98]"
+                    >
+                      <Play size={18} fill="currentColor" aria-hidden="true" /> Open WochIt anyway
+                    </a>
+                    <p className="mt-2 text-xs text-muted">If Tailscale is on, it opens. If the page does not load, go back to step 3.</p>
+                  </>
+                )}
+              </>
             )}
           </StepCard>
         </ol>

@@ -77,7 +77,8 @@ describe('runTailscale / tailscaleDnsName', () => {
 
   it('skips absolute candidates that do not exist on disk without calling exec', async () => {
     const f = fakeExec({});
-    await runTailscale(['x'], { exec: f.exec, candidates: ['C:\\definitely\\not\\here\\tailscale.exe', 'tailscale'] });
+    // path.resolve makes it absolute on Windows and Linux alike (a C: path counts as relative on posix).
+    await runTailscale(['x'], { exec: f.exec, candidates: [path.resolve('/definitely/not/here/tailscale.exe'), 'tailscale'] });
     expect(f.calls.map((c) => c.bin)).toEqual(['tailscale']);
   });
 

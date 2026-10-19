@@ -9,12 +9,13 @@ export interface EncodeStatus {
 }
 
 /**
- * null with nothing to say (no transcode seen for this media). An error wins; otherwise the
- * rendition furthest behind is reported while anything still runs; "Encoded" once all are done.
+ * "Ready" when no transcode has been seen for this media: segments come from the cache or are
+ * encoded on demand, and the first `transcode` message replaces the line. An error wins; otherwise
+ * the rendition furthest behind is reported while anything still runs; "Encoded" once all are done.
  */
-export function encodeStatus(transcode: Partial<Record<RenditionId, TranscodeInfo>>, durationSec: number): EncodeStatus | null {
+export function encodeStatus(transcode: Partial<Record<RenditionId, TranscodeInfo>>, durationSec: number): EncodeStatus {
   const entries = Object.entries(transcode).filter((e): e is [RenditionId, TranscodeInfo] => e[1] !== undefined);
-  if (entries.length === 0) return null;
+  if (entries.length === 0) return { tone: 'ok', text: 'Ready' };
   const failed = entries.find(([, t]) => t.status === 'error');
   if (failed) {
     const [rid, t] = failed;
