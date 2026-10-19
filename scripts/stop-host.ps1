@@ -74,8 +74,19 @@ function Get-HostProcesses {
   # reading the process list changes nothing, so WhatIf is off for this function only.
   $WhatIfPreference = $false
   Import-Module CimCmdlets -ErrorAction SilentlyContinue
+  Import-Module NetTCPIP -ErrorAction SilentlyContinue
+  # Launched through "pnpm host" the command line is just "node dist/index.js" (cwd host/), so the
+  # surest match is the node.exe that owns the listening port; the command-line match is the backup.
+  $byPort = @()
+  try {
+    $byPort = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop |
+      Select-Object -ExpandProperty OwningProcess -Unique |
+      ForEach-Object { Get-CimInstance Win32_Process -Filter "ProcessId=$_" -ErrorAction SilentlyContinue } |
+      Where-Object { $_ -and $_.Name -eq 'node.exe' })
+  } catch { }
+  if ($byPort.Count -gt 0) { return $byPort }
   Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -and $_.CommandLine -match 'host[\\/]dist[\\/]index\.js' }
+    Where-Object { $_.CommandLine -and $_.CommandLine -match '(host[\\/])?dist[\\/]index\.js' }
 }
 
 $dotenv = Read-DotEnv (Join-Path $repo '.env')
