@@ -39,12 +39,20 @@ Docs: [setup](docs/SETUP.md) · [architecture](docs/ARCHITECTURE.md) · [protoco
 ```
 pnpm install
 pnpm build
-copy .env.example .env      # set WOCHIT_PIN, WOCHIT_MEDIA_ROOTS, WOCHIT_CACHE_DIR, WOCHIT_VLC_HTTP_PASSWORD, KLIPY_API_KEY
-pnpm host                   # or double-click scripts\start-host.cmd
-tailscale serve --bg --https=8443 http://127.0.0.1:8788    # once; survives reboots
+copy .env.example .env      # set WOCHIT_PIN, WOCHIT_MEDIA_ROOTS, WOCHIT_CACHE_DIR, WOCHIT_VLC_HTTP_PASSWORD
+powershell -ExecutionPolicy Bypass -File scripts\install-shortcut.ps1    # once: "WochIt Host" on the Desktop
 ```
 
-Then open `https://<your-machine>.<tailnet>.ts.net:8443` on both ends.
+Then double-click **WochIt Host**. It starts the host, publishes
+`https://<your-machine>.<tailnet>.ts.net:8443` to your tailnet and opens the host console in its
+own window: readiness rows, a share card with the link, a QR code and the PIN, the library, and a
+Guests panel that shows her drift once she joins. The Share card turns your Tailscale share link
+into one invite link for her phone (`https://wochit.vercel.app/invite#…`) that walks her through
+installing Tailscale; the PIN you tell her separately. Paste a Klipy key into the GIF row whenever
+you want GIFs. Stop with the footer's **Stop host** button or `scripts\stop-host.ps1`.
+
+By hand instead: `pnpm host` (or `scripts\start-host.cmd`), then once
+`tailscale serve --bg --https=8443 http://127.0.0.1:8788`, and open `http://127.0.0.1:8788/?mode=host`.
 [SETUP.md](docs/SETUP.md) covers getting her onto your tailnet, VLC, autostart and troubleshooting.
 
 ## Development

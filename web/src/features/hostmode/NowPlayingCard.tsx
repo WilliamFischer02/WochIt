@@ -8,12 +8,15 @@ import SyncPill from '../controls/SyncPill';
 import { control, useRoomPosition } from '../controls/intents';
 import { usePlayer } from '../player/playerStore';
 import ReactionButtons from '../reactions/ReactionButtons';
+import { encodeStatus } from './encodeStatus';
+import { TONE_TEXT } from './ui';
 
 const SOURCE_LABEL = { vlc: 'VLC', browser: 'Browser', none: '—' } as const;
 
 export default function NowPlayingCard() {
   const media = useApp((s) => s.media);
   const playback = useApp((s) => s.playback);
+  const transcode = useApp((s) => s.transcode);
   const hostOrigin = useApp((s) => s.hostOrigin);
   const mediaToken = useApp((s) => s.mediaToken);
   const showVideo = usePlayer((s) => s.showVideoOnHost);
@@ -24,6 +27,7 @@ export default function NowPlayingCard() {
   const duration = media?.durationSec ?? 0;
   const playing = !!playback?.playing;
   const poster = media?.posterUrl ? resolveMediaUrl(media.posterUrl, hostOrigin, mediaToken) : null;
+  const encode = media ? encodeStatus(transcode, duration) : null;
 
   return (
     <section className="glass rounded-xl p-4" data-testid="now-playing" aria-label="Now playing">
@@ -32,7 +36,7 @@ export default function NowPlayingCard() {
           {poster ? <img src={poster} alt="" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-muted">—</div>}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-pill border border-line bg-surface-2 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted" data-testid="source-badge">
               {SOURCE_LABEL[playback?.source ?? 'none']}
             </span>
@@ -41,6 +45,11 @@ export default function NowPlayingCard() {
           <h2 className="mt-2 truncate text-lg font-semibold" data-testid="now-playing-title">
             {media?.title ?? 'Nothing playing yet'}
           </h2>
+          {encode && (
+            <div className={clsx('tnum mt-0.5 text-xs', TONE_TEXT[encode.tone])} data-testid="encode-status" data-tone={encode.tone} aria-live="polite">
+              {encode.text}
+            </div>
+          )}
           <div className="tnum mt-1 text-2xl font-semibold tracking-tight">
             {formatTime(position)} <span className="text-base font-normal text-muted">/ {formatTime(duration)}</span>
           </div>

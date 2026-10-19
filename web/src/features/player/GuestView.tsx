@@ -6,6 +6,7 @@ import { useApp } from '../../app/store';
 import ChatPane from '../../app/ChatPane';
 import { useLayout } from '../../lib/useMediaQuery';
 import ReactionsOverlay from '../reactions/ReactionsOverlay';
+import InstallHint from './InstallHint';
 import VideoStage from './VideoStage';
 
 export default function GuestView() {
@@ -34,6 +35,7 @@ export default function GuestView() {
       </div>
       <ChatPane variant={variant} open={chatOpen} />
       <ReactionsOverlay />
+      <InstallHint />
     </div>
   );
 }

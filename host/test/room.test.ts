@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { REACTION_MIN_GAP_MS, type C2S, type S2C } from '@wochit/shared';
+import { REACTION_MIN_GAP_MS, type C2S, type PlayerTelemetry, type S2C } from '@wochit/shared';
 import { silentLogger } from '../src/log.js';
-import { Room, type Connection } from '../src/room/room.js';
+import { Room, TELEMETRY_COALESCE_MS, type Connection } from '../src/room/room.js';
 import { FakeBridge } from './fakes/fakeBridge.js';
 import { CLIP, FILM, newFakeMedia, type FakeMediaService } from './fakes/fakeMediaService.js';
 
@@ -24,11 +24,39 @@ class Conn implements Connection {
   }
 }
 
+/** Manual timers driven by the fake clock: `fire()` runs everything due at `now()`. */
+class FakeTimers {
+  private readonly pending: Array<{ at: number; fn: () => void; id: number }> = [];
+  private seq = 0;
+  constructor(private readonly now: () => number) {}
+  set(fn: () => void, ms: number): () => void {
+    const id = ++this.seq;
+    this.pending.push({ at: this.now() + ms, fn, id });
+    return () => {
+      const i = this.pending.findIndex((p) => p.id === id);
+      if (i >= 0) this.pending.splice(i, 1);
+    };
+  }
+  get size(): number {
+    return this.pending.length;
+  }
+  fire(): void {
+    for (;;) {
+      const due = this.pending.filter((p) => p.at <= this.now()).sort((a, b) => a.at - b.at || a.id - b.id)[0];
+      if (!due) return;
+      this.pending.splice(this.pending.indexOf(due), 1);
+      due.fn();
+    }
+  }
+}
+
 interface World {
   room: Room;
   media: FakeMediaService;
   bridge: FakeBridge;
   now: () => number;
+  timers: FakeTimers;
+  /** Moves the clock and fires every injected timer that became due. */
   advance(ms: number): void;
   host: Conn;
   guest: Conn;
@@ -39,6 +67,7 @@ interface World {
 function makeWorld(opts: { followVlc?: boolean; bridgeEnabled?: boolean } = {}): World {
   let t = 1_700_000_000_000;
   const now = () => t;
+  const timers = new FakeTimers(now);
   const media = newFakeMedia();
   const bridge = new FakeBridge({ now, enabled: opts.bridgeEnabled ?? true });
   const room = new Room({
@@ -50,6 +79,7 @@ function makeWorld(opts: { followVlc?: boolean; bridgeEnabled?: boolean } = {}):
     chatLogDir: null,
     now,
     followVlc: opts.followVlc,
+    setTimer: (fn, ms) => timers.set(fn, ms),
   });
   const host = new Conn();
   const guest = new Conn();
@@ -66,8 +96,10 @@ function makeWorld(opts: { followVlc?: boolean; bridgeEnabled?: boolean } = {}):
     media,
     bridge,
     now,
+    timers,
     advance: (ms) => {
       t += ms;
+      timers.fire();
     },
     host,
     guest,
@@ -538,6 +570,145 @@ describe('chat, reactions, nick, typing', () => {
   it('a second hello over a joined connection is rejected', () => {
     w.send(w.host, { type: 'hello', v: 1, pin: '123456', nick: 'x', clientId: 'abcdefgh', mode: 'auto' });
     expect(w.host.last('error').code).toBe('bad_message');
+  });
+});
+
+describe('guest telemetry → host console', () => {
+  const report = (over: Partial<PlayerTelemetry> = {}): PlayerTelemetry => ({
+    position: 0,
+    playing: true,
+    bufferedAheadSec: 12,
+    rendition: '720p',
+    stalled: false,
+    rttMs: 40,
+    ...over,
+  });
+
+  /** Host + guest joined, FILM selected and playing from position 0 at the current clock. */
+  async function playing(): Promise<{ guestId: string; startedAt: number }> {
+    w.join(w.host);
+    w.join(w.guest);
+    w.send(w.host, { type: 'select_media', mediaId: FILM.id });
+    await w.room.whenIdle();
+    w.send(w.host, { type: 'control', action: 'play' });
+    const guestId = w.guest.last('welcome').you.id;
+    w.host.clear();
+    w.guest.clear();
+    return { guestId, startedAt: w.now() };
+  }
+
+  it('relays a guest report to hosts only, after the coalescing window, with driftSec against the room clock (negative = behind)', async () => {
+    const { guestId, startedAt } = await playing();
+    w.advance(10_000); // room clock now expects position 10
+    w.send(w.guest, { type: 'ping', t: 1, telemetry: report({ position: 9.5 }) });
+    expect(w.guest.last('pong')).toEqual({ type: 'pong', t: 1, serverTime: w.now() }); // pong unchanged
+    expect(w.host.of('telemetry')).toHaveLength(0); // trailing edge: nothing yet
+    expect(w.timers.size).toBe(1);
+
+    w.advance(TELEMETRY_COALESCE_MS - 1);
+    expect(w.host.of('telemetry')).toHaveLength(0);
+    w.advance(1);
+    const msgs = w.host.of('telemetry');
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.members).toHaveLength(1);
+    const m = msgs[0]!.members[0]!;
+    expect(m).toMatchObject({ ...report({ position: 9.5 }), id: guestId, at: startedAt + 10_000 });
+    expect(m.driftSec).toBeCloseTo(-0.5, 6);
+    expect(w.guest.of('telemetry')).toHaveLength(0);
+    expect(w.room.getTelemetry()).toEqual([m]);
+  });
+
+  it('coalesces: two reports 100 ms apart → one message carrying the latest values; ahead of the clock is positive drift', async () => {
+    const { guestId } = await playing();
+    w.advance(10_000);
+    w.send(w.guest, { type: 'ping', t: 1, telemetry: report({ position: 9.5 }) });
+    w.advance(100);
+    w.send(w.guest, { type: 'ping', t: 2, telemetry: report({ position: 10.4, stalled: true, bufferedAheadSec: 3 }) });
+    expect(w.timers.size).toBe(1);
+    w.advance(TELEMETRY_COALESCE_MS - 100);
+    const msgs = w.host.of('telemetry');
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.members).toHaveLength(1);
+    expect(msgs[0]!.members[0]).toMatchObject({ id: guestId, position: 10.4, stalled: true, bufferedAheadSec: 3 });
+    expect(msgs[0]!.members[0]!.driftSec).toBeCloseTo(0.3, 6); // 10.4 vs expected 10.1
+    expect(w.timers.size).toBe(0);
+
+    // The next quiet-period report starts a fresh window.
+    w.advance(2000);
+    w.send(w.guest, { type: 'ping', t: 3, telemetry: report({ position: 12.6 }) });
+    expect(w.host.of('telemetry')).toHaveLength(1);
+    w.advance(TELEMETRY_COALESCE_MS);
+    expect(w.host.of('telemetry')).toHaveLength(2);
+  });
+
+  it('driftSec is 0 while the room has no media', () => {
+    w.join(w.host);
+    w.join(w.guest);
+    w.host.clear();
+    w.send(w.guest, { type: 'ping', t: 1, telemetry: report({ position: 42 }) });
+    w.advance(TELEMETRY_COALESCE_MS);
+    expect(w.host.last('telemetry').members[0]).toMatchObject({ position: 42, driftSec: 0 });
+  });
+
+  it('a leaving guest is dropped and hosts get the new list at once ([] when it was the last)', async () => {
+    const { guestId } = await playing();
+    w.send(w.guest, { type: 'ping', t: 1, telemetry: report() });
+    w.advance(TELEMETRY_COALESCE_MS);
+    expect(w.host.last('telemetry').members.map((m) => m.id)).toEqual([guestId]);
+    w.host.clear();
+
+    // Pending coalesced update plus a leave: folded into the one immediate message, no timer left over.
+    w.send(w.guest, { type: 'ping', t: 2, telemetry: report({ position: 1 }) });
+    expect(w.timers.size).toBe(1);
+    w.room.leave(w.guest);
+    expect(w.host.of('telemetry')).toEqual([{ type: 'telemetry', members: [] }]);
+    expect(w.timers.size).toBe(0);
+    w.advance(TELEMETRY_COALESCE_MS * 2);
+    expect(w.host.of('telemetry')).toHaveLength(1);
+    expect(w.room.getTelemetry()).toEqual([]);
+  });
+
+  it('a guest that never reported leaves silently; a host joining later gets the snapshot right after welcome', async () => {
+    const { guestId } = await playing();
+    const quiet = new Conn();
+    w.join(quiet, { clientId: 'quiet-guest', nick: 'Q', isLocal: false });
+    w.host.clear();
+    w.room.leave(quiet);
+    expect(w.host.of('telemetry')).toHaveLength(0);
+
+    w.send(w.guest, { type: 'ping', t: 1, telemetry: report({ position: 2 }) });
+    w.advance(TELEMETRY_COALESCE_MS);
+    const host2 = new Conn();
+    w.join(host2, { clientId: 'host-tab-2', nick: 'Will2', mode: 'host', isLocal: true });
+    expect(host2.msgs.map((m) => m.type)).toEqual(['welcome', 'telemetry']);
+    expect(host2.last('telemetry').members.map((m) => m.id)).toEqual([guestId]);
+
+    // Guests never get it, not even a late-joining one.
+    const guest2 = new Conn();
+    w.join(guest2, { clientId: 'guest-2', nick: 'G2', isLocal: false });
+    expect(guest2.of('telemetry')).toHaveLength(0);
+  });
+
+  it('telemetry attached by a host connection is ignored but the pong still comes back', () => {
+    w.join(w.host);
+    w.send(w.host, { type: 'ping', t: 5, telemetry: report() });
+    expect(w.host.last('pong').t).toBe(5);
+    expect(w.timers.size).toBe(0);
+    w.advance(TELEMETRY_COALESCE_MS);
+    expect(w.host.of('telemetry')).toHaveLength(0);
+    expect(w.room.getTelemetry()).toEqual([]);
+  });
+
+  it('memberCounts splits hosts and guests; setGifSearchAvailable changes what welcome says', () => {
+    expect(w.room.memberCounts()).toEqual({ hosts: 0, guests: 0 });
+    w.join(w.host);
+    w.join(w.guest);
+    expect(w.room.memberCounts()).toEqual({ hosts: 1, guests: 1 });
+    w.room.setGifSearchAvailable(false);
+    const late = new Conn();
+    w.join(late, { clientId: 'late-guest', nick: 'L', isLocal: false });
+    expect(late.last('welcome').gifSearchAvailable).toBe(false);
+    expect(w.room.memberCounts()).toEqual({ hosts: 1, guests: 2 });
   });
 });
 

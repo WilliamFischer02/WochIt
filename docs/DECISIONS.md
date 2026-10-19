@@ -92,3 +92,61 @@ public site was reaching a 100.64.0.0/10 address. Real Chrome shows a permission
 of a silent block; Safari does not check. The host now answers the older opt-in preflight
 header (`Access-Control-Allow-Private-Network: true`) and SETUP § 10 explains the prompt, but
 the recommended link remains the same-origin tailnet URL, which needs none of this.
+
+## 2026-10-18 — Console in an Edge app window, not a tray app
+
+**Chosen:** the host console is the web app's host mode, opened by `scripts\wochit-console.ps1`
+with `msedge.exe --app=http://127.0.0.1:8788/?mode=host --window-size=1280,900`: a chromeless
+window with its own taskbar entry and the WochIt icon, from a browser every Windows 11 PC already
+has. A Desktop shortcut runs the script with a hidden window; the script starts the host if
+needed, checks the tailnet mapping and opens the window. About 150 lines of PowerShell, nothing
+to install, nothing to update separately.
+
+**Rejected:**
+- *An Electron or Tauri wrapper.* Another runtime to ship and keep current, 100+ MB on disk for
+  Electron, a second build and packaging pipeline, all to display a page the browser already
+  renders.
+- *A Windows tray app with a status dot.* A C#/.NET project with its own installer and update
+  story, for a coloured dot and a menu. The Readiness panel inside the console does the status
+  job and the shortcut does the launch job.
+- *A plain browser tab.* Works, but it gets lost among the other tabs and shows an address bar
+  for a page that has no navigation. `--app=` costs one flag and fixes that.
+
+## 2026-10-18 — Guest telemetry rides on ping
+
+**Chosen:** a guest's player attaches `PlayerTelemetry` (position, playing, buffered seconds,
+rendition, stalled, rtt) to the `ping` it already sends. The host computes drift server-side
+against the room's expected position at arrival and fans the latest report from every guest out
+to host connections only, as `telemetry`, coalesced to one message per 500 ms and `[]` when the
+last guest leaves.
+
+**Rejected:**
+- *A separate telemetry message on its own one-second timer.* More wire chatter and a second
+  timer on the guest for the same figures. The ping already runs at the sync cadence (every 3 s
+  while a player is attached), and the host already holds the expected position, so drift is one
+  subtraction on arrival instead of a second clock estimate shipped from the guest.
+- *Broadcasting telemetry to everyone.* Guests do not need each other's buffer and rtt; the
+  Guests panel is a host-console feature. Host-only fan-out keeps guest frames small and keeps
+  one guest's network trouble off the other's screen.
+
+## 2026-10-18 — Guest onboarding lives on the public page, state in the hash
+
+**Chosen:** one link to text her, `https://wochit.vercel.app/invite#h=<host origin>&s=<Tailscale
+share link>&n=<name>`. The public Vercel copy of the web app serves the page; everything it needs
+is in the fragment, parsed in her browser, so neither Vercel nor any log sees the host address or
+the share link. The page walks her through installing Tailscale, accepting the share with the
+same account, switching it on, and opens the host once a health probe answers. The PIN is told
+separately. William pastes the share link into the console once and it is stored in `.env`.
+
+**Rejected:**
+- *Texting her three separate links and the instructions for each* (App Store, the share link,
+  the host URL). Order matters (accept the share with the account the app signed in with, then
+  turn it on, then open the host) and a phone keyboard turns `william-desktop.tail2ac207.ts.net`
+  into typos. One page in the right order, with buttons, removes both failure modes.
+- *A Tailscale auth key or an ephemeral node.* Would join her phone to his tailnet as his
+  device, with a key he has to mint, keep secret and rotate, and would let her see his other
+  machines. Sharing the machine keeps her on her own account with one share he can revoke.
+- *Putting the PIN in the link.* The link travels over SMS and stays in message history, and
+  the share link inside it is already a credential; the PIN is the second, independent lock and
+  must not travel with the first. The share link also expires on its own (30 days unused), the
+  PIN may not.

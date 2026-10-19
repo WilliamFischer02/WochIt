@@ -185,8 +185,9 @@ on the host PC / I'm a guest" switch on the connect screen for the rare misdetec
 
 ## Sync (web, using shared/sync.ts)
 
-- On connect the client pings every 2 s for the first 10 s, then every 10 s; `ClockSync` turns the
-  round trips into a server-time offset.
+- On connect the client pings every 2 s for the first five pings, then every 3 s while a player
+  is attached (its telemetry rides on the ping, see below) and every 10 s otherwise; `ClockSync`
+  turns the round trips into a server-time offset.
 - Every 500 ms while media is loaded: `target = expectedPosition(state, clock.serverNow())`,
   `action = driftAction(video.currentTime, target, state.playing)`; apply: `none` → rate 1,
   `nudge` → `video.playbackRate = rate`, `seek` → `video.currentTime = target` (+0.3 s when
@@ -226,6 +227,60 @@ spin, fade out over the last 40 % of a 2.8–4 s life. Cap 80 live particles; dr
 Simultaneously a full-screen tint fades in and out over 1.6 s: cheer `rgba(255,196,0,.09)`, boo
 `rgba(96,160,64,.11)`, heart `rgba(255,88,140,.09)`. A small toast names the sender ("Mia 🍅").
 `requestAnimationFrame` only while particles exist; respect `prefers-reduced-motion` (tint only).
+
+## Host console and launcher
+
+The host PC's own view (`/?mode=host`, the host-mode rendering of the same web bundle) is the
+console: a **Readiness** panel (host, tailnet, VLC, encoder, GIF, guests; the GIF row takes an
+API key inline), a **Share** card (the invite composer below, plus the tailnet URL, a QR code and
+the PIN for the host's own eyes), **Now playing**
+with encode progress, a **VLC** card, a **Guests** panel (each guest's position, drift, buffer,
+rendition, state and round trip), the library browser, and a footer with a **Stop host** button.
+The readiness rows come from `/api/health` (which now reports `vlc.following`, `gifProvider`,
+`tailnet` and `members`); everything live comes over the room socket.
+
+- **Guest telemetry.** A guest's player adds `PlayerTelemetry` to each `ping` it already sends.
+  The host stamps the report, computes `driftSec` against the room's expected position at arrival
+  (it holds the clock the guest is following, so drift is one subtraction), keeps the latest
+  report per member and relays the list as `telemetry` to host connections only, coalesced to one
+  message per 500 ms, with `[]` when the last guest leaves. No second timer on the guest, no new
+  guest message, and guests never see each other's figures.
+- **Settings.** `GET`/`PATCH /api/host/settings`, guarded like `/api/library` (loopback + PIN
+  header). The PATCH writes `KLIPY_API_KEY` / `GIPHY_API_KEY` into `.env` atomically (the new
+  content goes to a temporary file that is renamed over `.env`; every other line is kept as it
+  was) and reconfigures the GIF provider in place, so a key pasted into the console turns GIF
+  search on without a restart. Keys are never echoed; the response only says whether one is set.
+- **Shutdown.** `POST /api/host/shutdown` answers, then runs the same path as Ctrl+C (sockets
+  closed with 1001, transcodes stopped, exit). VLC stays open.
+- **Launcher.** `scripts\wochit-console.ps1` (Windows PowerShell 5.1 and PowerShell 7, not
+  elevated): probe health; if nothing answers, run `scripts\start-host.cmd /hidden` detached
+  (output in `%LOCALAPPDATA%\WochIt\host.log`) and wait for health; make sure `tailscale serve`
+  maps `:8443` to the host, calling `scripts\publish-tailnet.ps1` if not; then open the console
+  with `msedge.exe --app=<url> --window-size=1280,900`, a chromeless window with its own taskbar
+  entry (Chrome as the fallback, the default browser after that). `scripts\install-shortcut.ps1`
+  creates the Desktop shortcut **WochIt Host** that runs the launcher with a hidden window and
+  `scripts\wochit.ico` (built from the PWA icons by `scripts\make-ico.mjs`, no dependencies);
+  `scripts\wochit-console.cmd` runs it with the window kept open on errors; `scripts\stop-host.ps1`
+  calls the shutdown route and falls back to stopping the `node` process running
+  `host/dist/index.js`. DECISIONS.md records why this is not a tray app.
+
+### Guest invite
+
+The Share card is an invite composer. William pastes the Tailscale share link once; the settings
+PATCH stores it as `WOCHIT_TS_SHARE_LINK` (returned in full by `GET /api/host/settings`, which is
+host-only). **Copy invite** then yields one message built with
+`buildInviteUrl(publicOrigin, { h: <host origin>, s: <share link>, n: <host name> })`:
+`https://wochit.vercel.app/invite#h=…&s=…&n=…`. The Vercel copy of the web bundle serves
+`/invite` (`INVITE_PATH`) as the guest onboarding page; `parseInviteHash(location.hash)` gives it
+the host origin, the share link and the name. The state lives in the fragment on purpose:
+browsers never send it, so the host address and the share link never reach Vercel's server or
+logs, and the page is static. It walks the phone through four steps (App Store → open the share
+link and accept with the same account → switch Tailscale on → connected) and in the last step
+probes `GET <h>/api/health` across origins (the host's CORS allows `WOCHIT_CORS_ORIGINS`,
+default the Vercel origin; Safari shows no local-network prompt), showing **Open WochIt** once
+it answers. The PIN is deliberately not in the link: the link travels over SMS and the share link
+inside it is already a credential, so the PIN stays an independent second lock, told
+separately. After the first join on iPhone the app shows an Add to Home Screen hint.
 
 ## Configuration
 

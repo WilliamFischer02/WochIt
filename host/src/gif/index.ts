@@ -1,5 +1,6 @@
 // The one GIF seam the server uses: provider selection, caching, and the chat URL allowlist.
 // Tenor is gone (Google shut the API down on 2026-06-30), so the choice is Klipy or GIPHY.
+// Keys can change at runtime (the host console's settings PATCH) via `reconfigure`.
 import type { GifSearchResponse } from '@wochit/shared';
 import { GIPHY_CDN_HOSTS, createGiphyProvider } from './giphy.js';
 import { KLIPY_CDN_HOSTS, createKlipyProvider } from './klipy.js';
@@ -10,12 +11,22 @@ export type { GifPage, GifProvider, GifProviderName } from './provider.js';
 
 export type GifProviderChoice = 'auto' | GifProviderName;
 
+/** Keys to apply at runtime. `undefined` keeps the current key; `null` or '' clears it. */
+export interface GifKeys {
+  klipyKey?: string | null | undefined;
+  giphyKey?: string | null | undefined;
+}
+
 export interface GifService {
   /** False when no usable key is configured; then search/featured reject with GifError. */
   readonly available: boolean;
   readonly provider: GifProviderName | null;
+  /** Whether a non-empty key is held per provider. Never the key itself. */
+  readonly keys: { klipy: boolean; giphy: boolean };
   search(q: string, page?: GifPage): Promise<GifSearchResponse>;
   featured(page?: GifPage): Promise<GifSearchResponse>;
+  /** Swap API keys without a restart. Rebuilds the provider and drops the response cache. */
+  reconfigure(keys: GifKeys): void;
 }
 
 export interface GifServiceOptions {
@@ -47,26 +58,27 @@ export function pickGifProvider(choice: GifProviderChoice, klipyKey: string | nu
   }
 }
 
+const OFF_MESSAGE = 'GIF search is not configured (set KLIPY_API_KEY or GIPHY_API_KEY)';
+
 export function createGifService(opts: GifServiceOptions): GifService {
-  const name = pickGifProvider(opts.provider, opts.klipyKey, opts.giphyKey);
-  if (!name) {
-    if (opts.provider !== 'auto') opts.warn?.(`WOCHIT_GIF_PROVIDER=${opts.provider} but its API key is empty; GIF search is off`);
-    const off = async (): Promise<GifSearchResponse> => {
-      throw new GifError('GIF search is not configured (set KLIPY_API_KEY or GIPHY_API_KEY)');
-    };
-    return { available: false, provider: null, search: off, featured: off };
-  }
+  let klipyKey = (opts.klipyKey ?? '').trim();
+  let giphyKey = (opts.giphyKey ?? '').trim();
+  let name: GifProviderName | null = null;
+  let provider: GifProvider | null = null;
 
   const deps = { fetchImpl: opts.fetchImpl, timeoutMs: opts.timeoutMs ?? 10_000 };
-  const provider: GifProvider =
-    name === 'klipy'
-      ? createKlipyProvider({ apiKey: (opts.klipyKey ?? '').trim(), ...deps })
-      : createGiphyProvider({ apiKey: (opts.giphyKey ?? '').trim(), ...deps });
-
   const now = opts.now ?? Date.now;
   const searchTtl = opts.cacheTtlMs ?? 60_000;
   const featuredTtl = opts.featuredTtlMs ?? 300_000;
   const cache = new Map<string, { at: number; ttl: number; value: Promise<GifSearchResponse> }>();
+
+  const build = (): void => {
+    name = pickGifProvider(opts.provider, klipyKey, giphyKey);
+    provider = name === null ? null : name === 'klipy' ? createKlipyProvider({ apiKey: klipyKey, ...deps }) : createGiphyProvider({ apiKey: giphyKey, ...deps });
+    cache.clear();
+  };
+  build();
+  if (!name && opts.provider !== 'auto') opts.warn?.(`WOCHIT_GIF_PROVIDER=${opts.provider} but its API key is empty; GIF search is off`);
 
   const cached = (key: string, ttl: number, load: () => Promise<GifSearchResponse>): Promise<GifSearchResponse> => {
     const t = now();
@@ -81,14 +93,34 @@ export function createGifService(opts: GifServiceOptions): GifService {
     return value;
   };
 
+  const active = (): { name: GifProviderName; provider: GifProvider } | null => (name && provider ? { name, provider } : null);
+
   return {
-    available: true,
-    provider: name,
-    search: (q, page = {}) => {
-      const query = q.trim();
-      return cached(`${name}|search|${query.toLowerCase()}|${page.pos ?? ''}|${page.limit ?? ''}`, searchTtl, () => provider.search(query, page));
+    get available() {
+      return name !== null;
     },
-    featured: (page = {}) => cached(`${name}|featured|${page.pos ?? ''}|${page.limit ?? ''}`, featuredTtl, () => provider.featured(page)),
+    get provider() {
+      return name;
+    },
+    get keys() {
+      return { klipy: klipyKey !== '', giphy: giphyKey !== '' };
+    },
+    search: (q, page = {}) => {
+      const a = active();
+      if (!a) return Promise.reject(new GifError(OFF_MESSAGE));
+      const query = q.trim();
+      return cached(`${a.name}|search|${query.toLowerCase()}|${page.pos ?? ''}|${page.limit ?? ''}`, searchTtl, () => a.provider.search(query, page));
+    },
+    featured: (page = {}) => {
+      const a = active();
+      if (!a) return Promise.reject(new GifError(OFF_MESSAGE));
+      return cached(`${a.name}|featured|${page.pos ?? ''}|${page.limit ?? ''}`, featuredTtl, () => a.provider.featured(page));
+    },
+    reconfigure(keys) {
+      if (keys.klipyKey !== undefined) klipyKey = (keys.klipyKey ?? '').trim();
+      if (keys.giphyKey !== undefined) giphyKey = (keys.giphyKey ?? '').trim();
+      build();
+    },
   };
 }
 

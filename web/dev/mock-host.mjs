@@ -172,7 +172,21 @@ const room = {
   chat: [],
   following: true,
   lastReactionAt: new Map(),
+  /** member id → MemberTelemetry, from guest pings; relayed to host connections. */
+  telemetry: new Map(),
 };
+
+/** GIF keys as the host would hold them in .env; the mock starts with a Klipy key so GIF search
+ *  works out of the box (PATCH /api/host/settings flips it either way). */
+const settings = { keys: { klipy: true, giphy: false }, tailscaleShareLink: null };
+function gifProvider() {
+  return settings.keys.klipy ? 'klipy' : settings.keys.giphy ? 'giphy' : null;
+}
+function settingsResponse() {
+  return { gifSearchAvailable: gifProvider() !== null, gifProvider: gifProvider(), keys: { ...settings.keys }, tailscaleShareLink: settings.tailscaleShareLink };
+}
+const TAILNET_URL = 'https://mock-host.tailnet.ts.net:8443';
+const startedAt = Date.now();
 
 function positionNow() {
   const s = room.state;
@@ -203,6 +217,55 @@ function systemLine(text) {
 function isLocal(req) {
   const a = req.socket.remoteAddress ?? '';
   return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
+function memberCounts() {
+  let hosts = 0;
+  let guests = 0;
+  for (const m of room.clients.values()) (m.isHost ? hosts++ : guests++);
+  return { hosts, guests };
+}
+
+// Telemetry relay: every guest's latest report goes to host connections, at most once per 500 ms
+// (docs/PROTOCOL.md `telemetry`). `[]` goes out once when the last reporter leaves.
+const TELEMETRY_COALESCE_MS = 500;
+let telemetryTimer = null;
+let telemetrySentAt = 0;
+function relayTelemetry() {
+  telemetrySentAt = Date.now();
+  const data = JSON.stringify({ type: 'telemetry', members: [...room.telemetry.values()] });
+  for (const [ws, m] of room.clients) if (m.isHost && ws.readyState === ws.OPEN) ws.send(data);
+}
+function scheduleTelemetry() {
+  if (telemetryTimer) return;
+  const wait = Math.max(0, TELEMETRY_COALESCE_MS - (Date.now() - telemetrySentAt));
+  telemetryTimer = setTimeout(() => {
+    telemetryTimer = null;
+    relayTelemetry();
+  }, wait);
+}
+function recordTelemetry(me, t) {
+  if (!t || typeof t !== 'object') return;
+  const position = Math.max(0, Number(t.position) || 0);
+  room.telemetry.set(me.id, {
+    id: me.id,
+    position,
+    playing: !!t.playing,
+    bufferedAheadSec: Math.max(0, Number(t.bufferedAheadSec) || 0),
+    rendition: typeof t.rendition === 'string' ? t.rendition : null,
+    stalled: !!t.stalled,
+    rttMs: typeof t.rttMs === 'number' ? Math.max(0, t.rttMs) : null,
+    driftSec: position - positionNow(),
+    at: Date.now(),
+  });
+  scheduleTelemetry();
+}
+function readBody(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', () => resolve(''));
+  });
 }
 
 // Heartbeat: state every second while playing; pause at the end of the media.
@@ -269,10 +332,12 @@ function handleMessage(ws, req, raw) {
       room: { state: { ...room.state, position: positionNow(), updatedAt: Date.now() }, media: room.media, members: members(), recentChat: room.chat },
       serverTime: Date.now(),
       mediaToken: 'mock-token',
-      gifSearchAvailable: true,
+      gifSearchAvailable: gifProvider() !== null,
       vlc: { connected: false, following: room.following },
     });
     if (mode === 'host' && !local) sendTo(ws, { type: 'error', code: 'not_host', message: 'Not a local connection; joined as guest' });
+    // A host console joining late gets what the guests have reported so far.
+    if (isHost && room.telemetry.size > 0) sendTo(ws, { type: 'telemetry', members: [...room.telemetry.values()] });
     broadcast({ type: 'presence', members: members() }, ws);
     systemLine(`${nick} joined`);
     return;
@@ -280,6 +345,7 @@ function handleMessage(ws, req, raw) {
 
   switch (msg?.type) {
     case 'ping':
+      if (!me.isHost && msg.telemetry) recordTelemetry(me, msg.telemetry);
       return sendTo(ws, { type: 'pong', t: msg.t, serverTime: Date.now() });
     case 'control': {
       if (!room.state.mediaId) return sendTo(ws, { type: 'error', code: 'bad_message', message: 'No media' });
@@ -405,10 +471,46 @@ const server = http.createServer((req, res) => {
       version: 'mock',
       protocol: PROTOCOL_VERSION,
       source: room.state.source,
-      vlc: { connected: false },
+      vlc: { connected: false, following: room.following },
       ffmpeg: { found: true, encoder: 'libx264 (mock)' },
-      gifSearchAvailable: true,
+      gifSearchAvailable: gifProvider() !== null,
+      gifProvider: gifProvider(),
+      cache: { usedBytes: 21_300_000, maxBytes: 80 * 1024 ** 3 },
+      urls: [`http://127.0.0.1:${PORT}`, TAILNET_URL],
+      tailnet: { published: true, url: TAILNET_URL, checkedAt: startedAt },
+      members: memberCounts(),
     });
+  }
+  if (p === '/api/host/settings') {
+    if (!isLocal(req)) return json(res, 403, { error: 'not_host', message: 'Settings are host-only' });
+    if (!requirePin(req, res)) return;
+    if (req.method === 'GET') return json(res, 200, settingsResponse());
+    if (req.method === 'PATCH') {
+      return void readBody(req).then((body) => {
+        let patch;
+        try {
+          patch = JSON.parse(body || '{}');
+        } catch {
+          return json(res, 400, { error: 'bad_message', message: 'Not JSON' });
+        }
+        if (typeof patch.klipyApiKey === 'string') settings.keys.klipy = patch.klipyApiKey.trim().length > 0;
+        if (typeof patch.giphyApiKey === 'string') settings.keys.giphy = patch.giphyApiKey.trim().length > 0;
+        if (typeof patch.tailscaleShareLink === 'string') {
+          const link = patch.tailscaleShareLink.trim();
+          if (link && !/^https?:\/\/\S+$/.test(link)) return json(res, 400, { error: 'bad_message', message: 'tailscaleShareLink must be a URL or empty' });
+          settings.tailscaleShareLink = link || null;
+        }
+        return json(res, 200, settingsResponse());
+      });
+    }
+    return json(res, 405, { error: 'bad_message', message: 'GET or PATCH' });
+  }
+  if (p === '/api/host/shutdown') {
+    if (!isLocal(req)) return json(res, 403, { error: 'not_host', message: 'Shutdown is host-only' });
+    if (!requirePin(req, res)) return;
+    if (req.method !== 'POST') return json(res, 405, { error: 'bad_message', message: 'POST' });
+    // The real agent exits after answering; the mock keeps serving so the suite can go on.
+    return json(res, 200, { ok: true, message: 'Mock host acknowledged shutdown (and keeps running for the tests)' });
   }
   if (p === '/api/library') {
     if (!isLocal(req)) return json(res, 403, { error: 'not_host', message: 'Library is host-only' });
@@ -438,6 +540,9 @@ const server = http.createServer((req, res) => {
     room.media = null;
     room.chat = [];
     room.following = true;
+    room.telemetry.clear();
+    settings.keys = { klipy: true, giphy: false };
+    settings.tailscaleShareLink = null;
     broadcast({ type: 'media', media: null });
     broadcast({ type: 'state', state: room.state });
     return json(res, 200, { ok: true });
@@ -465,6 +570,7 @@ wss.on('connection', (ws, req) => {
     const me = room.clients.get(ws);
     if (!me) return;
     room.clients.delete(ws);
+    if (room.telemetry.delete(me.id)) scheduleTelemetry();
     broadcast({ type: 'presence', members: members() });
     systemLine(`${me.nick} left`);
   });

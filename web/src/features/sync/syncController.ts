@@ -8,6 +8,7 @@ import {
   expectedPosition,
   type C2S,
   type PlaybackState,
+  type PlayerTelemetry,
 } from '@wochit/shared';
 
 export type SyncStatus = 'in-sync' | 'catching-up' | 'seeking' | 'paused' | 'waiting';
@@ -48,11 +49,18 @@ export interface SyncControllerDeps {
   seekLeadSec?: number;
   /** iOS gesture gate: while false the controller never calls play(). */
   canPlay?(): boolean;
+  /**
+   * Guests with a player attach their PlayerTelemetry to every ping so the host console can see
+   * them. Return null for a bare ping (host-mode clients). `rttMs` is the last measured round trip.
+   */
+  telemetry?(rttMs: number | null): PlayerTelemetry | null;
 }
 
 export const PING_FAST_MS = 2000;
 export const PING_FAST_COUNT = 5;
 export const PING_SLOW_MS = 10_000;
+/** Slow cadence while telemetry rides along, so the host console stays a few seconds fresh. */
+export const PING_TELEMETRY_MS = 3000;
 export const TICK_MS = 500;
 /** How long an optimistic local intent stands before the server state wins regardless. */
 export const OPTIMISTIC_TTL_MS = 1500;
@@ -69,6 +77,7 @@ export class SyncController {
   private pingsSent = 0;
   private unsubPong: (() => void) | null = null;
   private running = false;
+  private lastRttMs: number | null = null;
 
   constructor(private readonly deps: SyncControllerDeps) {}
 
@@ -78,6 +87,11 @@ export class SyncController {
 
   serverNow(): number {
     return this.clock.serverNow(this.now());
+  }
+
+  /** Round trip of the most recent pong, ms; null before the first. */
+  get rttMs(): number | null {
+    return this.lastRttMs;
   }
 
   start(): void {
@@ -110,13 +124,15 @@ export class SyncController {
 
   private ping(): void {
     if (!this.running) return;
-    this.deps.send({ type: 'ping', t: this.now() });
+    const telemetry = this.deps.telemetry?.(this.lastRttMs) ?? null;
+    this.deps.send(telemetry ? { type: 'ping', t: this.now(), telemetry } : { type: 'ping', t: this.now() });
     this.pingsSent++;
-    const delay = this.pingsSent < PING_FAST_COUNT ? PING_FAST_MS : PING_SLOW_MS;
+    const delay = this.pingsSent < PING_FAST_COUNT ? PING_FAST_MS : telemetry ? PING_TELEMETRY_MS : PING_SLOW_MS;
     this.pingTimer = setTimeout(() => this.ping(), delay);
   }
 
   private handlePong(pong: { t: number; serverTime: number }): void {
+    this.lastRttMs = Math.max(0, this.now() - pong.t);
     this.clock.addSample(pong.t, pong.serverTime, this.now());
     this.deps.onOffset?.(this.clock.offset);
   }

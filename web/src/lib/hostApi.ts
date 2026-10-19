@@ -1,6 +1,6 @@
 // Thin REST client for the host agent (docs/PROTOCOL.md § REST). Everything validates with the
 // shared zod schemas so a wrong server (Vercel's SPA fallback returning index.html) is detected.
-import { HealthResponse, LibraryResponse } from '@wochit/shared';
+import { HealthResponse, HostSettingsResponse, LibraryResponse, ShutdownResponse, type HostSettingsPatch } from '@wochit/shared';
 
 async function fetchJson(url: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<unknown> {
   const ctrl = new AbortController();
@@ -49,5 +49,38 @@ export async function fetchLibrary(origin: string, pin: string, parent: string |
   const data = await fetchJson(u.toString(), { headers: { 'x-wochit-pin': pin } });
   const parsed = LibraryResponse.safeParse(data);
   if (!parsed.success) throw new ApiError(500, 'Unexpected library response');
+  return parsed.data;
+}
+
+// ---- host-only console endpoints (loopback + PIN header, like the library)
+
+function hostHeaders(pin: string, json = false): Record<string, string> {
+  return json ? { 'x-wochit-pin': pin, 'content-type': 'application/json' } : { 'x-wochit-pin': pin };
+}
+
+export async function fetchHostSettings(origin: string, pin: string): Promise<HostSettingsResponse> {
+  const data = await fetchJson(new URL('/api/host/settings', origin).toString(), { headers: hostHeaders(pin) });
+  const parsed = HostSettingsResponse.safeParse(data);
+  if (!parsed.success) throw new ApiError(500, 'Unexpected settings response');
+  return parsed.data;
+}
+
+/** Writes the given keys into the host's .env; an empty string removes a key. Keys never come back. */
+export async function patchHostSettings(origin: string, pin: string, patch: HostSettingsPatch): Promise<HostSettingsResponse> {
+  const data = await fetchJson(new URL('/api/host/settings', origin).toString(), {
+    method: 'PATCH',
+    headers: hostHeaders(pin, true),
+    body: JSON.stringify(patch),
+  });
+  const parsed = HostSettingsResponse.safeParse(data);
+  if (!parsed.success) throw new ApiError(500, 'Unexpected settings response');
+  return parsed.data;
+}
+
+/** Asks the host agent to exit (VLC stays running). The socket closes right after. */
+export async function postShutdown(origin: string, pin: string): Promise<ShutdownResponse> {
+  const data = await fetchJson(new URL('/api/host/shutdown', origin).toString(), { method: 'POST', headers: hostHeaders(pin) });
+  const parsed = ShutdownResponse.safeParse(data);
+  if (!parsed.success) throw new ApiError(500, 'Unexpected shutdown response');
   return parsed.data;
 }

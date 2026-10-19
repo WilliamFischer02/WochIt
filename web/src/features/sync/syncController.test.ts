@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { C2S, PlaybackState } from '@wochit/shared';
-import { OPTIMISTIC_TTL_MS, PING_FAST_COUNT, PING_FAST_MS, PING_SLOW_MS, SyncController, type VideoLike } from './syncController';
+import type { PlayerTelemetry } from '@wochit/shared';
+import { OPTIMISTIC_TTL_MS, PING_FAST_COUNT, PING_FAST_MS, PING_SLOW_MS, PING_TELEMETRY_MS, SyncController, type VideoLike } from './syncController';
 import { useApp } from '../../app/store';
 
 class FakeVideo implements VideoLike {
@@ -29,7 +30,7 @@ function paused(position: number, updatedAt: number, seq = 1): PlaybackState {
   return { ...playing(position, updatedAt, seq), playing: false };
 }
 
-function harness(initial: PlaybackState | null, opts: { lead?: number; canPlay?: () => boolean } = {}) {
+function harness(initial: PlaybackState | null, opts: { lead?: number; canPlay?: () => boolean; telemetry?: (rttMs: number | null) => PlayerTelemetry | null } = {}) {
   let now = 100_000;
   let state = initial;
   const sent: C2S[] = [];
@@ -53,6 +54,7 @@ function harness(initial: PlaybackState | null, opts: { lead?: number; canPlay?:
     now: () => now,
     seekLeadSec: opts.lead ?? 0,
     canPlay: opts.canPlay,
+    telemetry: opts.telemetry,
   });
   return {
     ctl,
@@ -235,6 +237,44 @@ describe('SyncController clock', () => {
     h.pong({ t, serverTime: t + 20 + 500 }); // server is 500 ms ahead
     expect(h.offsets.at(-1)).toBeCloseTo(500);
     expect(h.ctl.serverNow()).toBeCloseTo(h.now + 500);
+    expect(h.ctl.rttMs).toBe(40);
+    h.ctl.stop();
+  });
+
+  it('attaches guest telemetry to pings, with the last round trip, and pings every 3 s then', () => {
+    const seen: Array<number | null> = [];
+    const h = harness(null, {
+      telemetry: (rttMs) => {
+        seen.push(rttMs);
+        return { position: 5, playing: true, bufferedAheadSec: 10, rendition: '720p', stalled: false, rttMs };
+      },
+    });
+    h.ctl.start();
+    const pings = () => h.sent.filter((m): m is Extract<C2S, { type: 'ping' }> => m.type === 'ping');
+    expect(pings()[0]?.telemetry).toMatchObject({ position: 5, rendition: '720p', rttMs: null });
+    expect(seen).toEqual([null]);
+    const t = pings()[0]!.t;
+    h.advance(60);
+    h.pong({ t, serverTime: t + 30 });
+    vi.advanceTimersByTime(PING_FAST_MS * (PING_FAST_COUNT - 1));
+    expect(pings()).toHaveLength(PING_FAST_COUNT);
+    expect(pings().at(-1)?.telemetry?.rttMs).toBe(60);
+    vi.advanceTimersByTime(PING_TELEMETRY_MS - 1);
+    expect(pings()).toHaveLength(PING_FAST_COUNT);
+    vi.advanceTimersByTime(1);
+    expect(pings()).toHaveLength(PING_FAST_COUNT + 1);
+    h.ctl.stop();
+  });
+
+  it('sends bare pings when the telemetry callback returns null (host-mode client)', () => {
+    const h = harness(null, { telemetry: () => null });
+    h.ctl.start();
+    vi.advanceTimersByTime(PING_FAST_MS * (PING_FAST_COUNT - 1));
+    const pings = h.sent.filter((m): m is Extract<C2S, { type: 'ping' }> => m.type === 'ping');
+    expect(pings).toHaveLength(PING_FAST_COUNT);
+    for (const p of pings) expect('telemetry' in p).toBe(false);
+    vi.advanceTimersByTime(PING_SLOW_MS - 1);
+    expect(h.sent.filter((m) => m.type === 'ping')).toHaveLength(PING_FAST_COUNT);
     h.ctl.stop();
   });
 });

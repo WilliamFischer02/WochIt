@@ -20,11 +20,14 @@ const MODES: Array<{ value: ClientMode; label: string }> = [
 
 export default function ConnectScreen() {
   const params = new URLSearchParams(window.location.search);
+  // Arriving from the /invite page: this page is served by the host itself, she is a guest, and
+  // the only things to type are the PIN and a name.
+  const fromInvite = params.get('from') === 'invite';
   const [detect, setDetect] = useState<HostDetect>('checking');
   const [host, setHost] = useState(() => params.get('h') ?? loadPref('host') ?? '');
   const [pin, setPin] = useState(() => loadPref('pin') ?? '');
   const [nick, setNick] = useState(() => loadPref('nick') ?? '');
-  const [mode, setMode] = useState<ClientMode>(() => parseMode(params.get('mode')) ?? parseMode(loadPref('mode')) ?? 'auto');
+  const [mode, setMode] = useState<ClientMode>(() => (fromInvite ? 'guest' : parseMode(params.get('mode')) ?? parseMode(loadPref('mode')) ?? 'auto'));
   const [joining, setJoining] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const lastError = useApp((s) => s.lastError);
@@ -57,7 +60,7 @@ export default function ConnectScreen() {
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     setLocalError(null);
-    const origin = detect === 'same-origin' ? window.location.origin : normalizeHostOrigin(host);
+    const origin = detect === 'same-origin' || fromInvite ? window.location.origin : normalizeHostOrigin(host);
     if (!origin) return setLocalError('Enter the host address, e.g. william-desktop.tail2ac207.ts.net:8443');
     if (!/^\d{4,8}$/.test(pin)) return setLocalError('The PIN is 4–8 digits');
     const name = nick.trim();
@@ -70,10 +73,10 @@ export default function ConnectScreen() {
   const serverError =
     lastError?.code === 'bad_pin' ? 'Wrong PIN' : lastError?.code === 'rate_limited' ? 'Too many tries — wait a minute' : lastError && joining === false ? lastError.message : null;
   const error = localError ?? serverError;
-  const showHost = detect === 'remote';
+  const showHost = detect === 'remote' && !fromInvite;
 
   return (
-    <main className="relative grid min-h-dvh place-items-center overflow-hidden bg-bg p-4 safe-x safe-t safe-b">
+    <main className="relative grid min-h-dvh place-items-center overflow-hidden bg-bg p-4 safe-x safe-t safe-b" data-from-invite={fromInvite}>
       <div
         aria-hidden="true"
         className="pointer-events-none absolute left-1/2 top-1/3 size-[70vmax] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-40 blur-3xl"
@@ -137,7 +140,9 @@ export default function ConnectScreen() {
           />
         </label>
 
-        <div className="mb-5 flex rounded-pill border border-line bg-surface-2 p-1 text-xs" role="radiogroup" aria-label="Where are you">
+        {fromInvite && <p className="mb-4 text-sm text-muted" data-testid="from-invite-hint">You made it. Type the PIN you were told and pick a name.</p>}
+
+        <div className={clsx('mb-5 flex rounded-pill border border-line bg-surface-2 p-1 text-xs', fromInvite && 'hidden')} role="radiogroup" aria-label="Where are you">
           {MODES.map((m) => (
             <button
               key={m.value}

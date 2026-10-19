@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 // WochIt host agent CLI: config → media service → VLC bridge → room → HTTP + WebSocket → banner.
-import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -12,6 +11,7 @@ import { createGifService, type GifService } from './gif/index.js';
 import { createLogger } from './log.js';
 import { createMediaService, type MediaService } from './media/index.js';
 import { isLoopback, ownAddresses } from './net/hostDetect.js';
+import { TailnetChecker, tailscaleDnsName } from './net/tailscale.js';
 import { Room } from './room/room.js';
 import { createApp } from './server/http.js';
 import { attachWebSocket } from './server/ws.js';
@@ -95,6 +95,7 @@ async function main(): Promise<void> {
 
   // ---- http + ws
   let publicUrls: string[] = [];
+  let tailnetChecker: TailnetChecker | null = null;
   const app = createApp({
     media,
     room,
@@ -110,6 +111,11 @@ async function main(): Promise<void> {
     version: config.version,
     corsOrigins: config.corsOrigins,
     urls: () => publicUrls,
+    envPath: config.envPath,
+    tailscaleShareLink: config.tailscaleShareLink,
+    tailnet: () => tailnetChecker?.status ?? null,
+    // `shutdown` is defined below; the callback only runs on a request, long after that.
+    onShutdownRequest: () => void shutdown('http'),
   });
   const server = createServer(app);
   server.keepAliveTimeout = 65_000;
@@ -135,9 +141,13 @@ async function main(): Promise<void> {
     return;
   }
 
-  const tailnet = await tailscaleDnsName(log);
+  const tailnet = await tailscaleDnsName({ log });
   const urls = publicUrlsFor(config, server, tailnet);
   publicUrls = [urls.local, ...urls.lan, ...(urls.tailnet ? [urls.tailnet] : [])];
+  // Is `tailscale serve` actually publishing us? Checked in the background, now and every minute;
+  // /api/health reports the cached answer so the console can say "published" or tell him the command.
+  tailnetChecker = new TailnetChecker({ hostPort: urls.port, dnsName: () => tailnet, log: log.child('tailnet') });
+  tailnetChecker.start();
   printBanner(config, media, bridge, gif, urls);
 
   // ---- shutdown
@@ -145,13 +155,14 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
-    log.info('%s received, shutting down', signal);
+    log.info('shutting down (%s)', signal);
     const hard = setTimeout(() => {
       log.warn('shutdown timed out, exiting');
       process.exit(1);
     }, 8000);
     hard.unref();
     try {
+      tailnetChecker?.stop();
       bridge.stop();
       room.dispose();
       await ws.closeAll(1001, 'host shutting down');
@@ -185,29 +196,6 @@ function listen(server: Server, port: number, host: string): Promise<void> {
     server.once('listening', onListening);
     server.listen(port, host);
   });
-}
-
-/** `tailscale status --json` → Self.DNSName without the trailing dot, or null when unavailable. */
-async function tailscaleDnsName(log: { debug(msg: string, ...rest: unknown[]): void }): Promise<string | null> {
-  const candidates = ['tailscale', 'C:\\Program Files\\Tailscale\\tailscale.exe'];
-  for (const bin of candidates) {
-    if (bin.includes('\\') && !existsSync(bin)) continue;
-    try {
-      const out = await new Promise<string>((resolve, reject) => {
-        execFile(bin, ['status', '--json'], { timeout: 3000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
-          if (err) reject(err);
-          else resolve(stdout);
-        });
-      });
-      const json = JSON.parse(out) as { Self?: { DNSName?: unknown }; BackendState?: unknown };
-      const name = json.Self?.DNSName;
-      if (typeof name === 'string' && name) return name.replace(/\.$/, '');
-      return null;
-    } catch (err) {
-      log.debug('tailscale status via %s failed: %s', bin, err instanceof Error ? err.message : String(err));
-    }
-  }
-  return null;
 }
 
 function formatBytes(n: number): string {
@@ -254,6 +242,7 @@ function printBanner(config: Config, media: MediaService, bridge: VlcBridge, gif
   lines.push(`  WochIt host v${config.version}${config.fakeMedia ? '   [DEV: fake media]' : ''}`);
   lines.push('');
   lines.push(`  Local:      ${urls.local}/`);
+  lines.push(`  Console:    ${urls.local}/?mode=host`);
   for (const u of urls.lan) lines.push(`  Network:    ${u}/`);
   if (!urls.lan.length) lines.push(`  Network:    off (bound to ${config.bind}; set WOCHIT_BIND=0.0.0.0 for plain-HTTP LAN access)`);
   if (urls.tailnet) {
@@ -274,7 +263,7 @@ function printBanner(config: Config, media: MediaService, bridge: VlcBridge, gif
           : `waiting on 127.0.0.1:${config.vlc.httpPort}${config.vlc.passwordConfigured ? '' : ' (password generated; only VLCs launched from WochIt will connect)'}`
     }`,
   );
-  lines.push(`  GIF search: ${gif.available ? gif.provider : 'off (set KLIPY_API_KEY or GIPHY_API_KEY)'}`);
+  lines.push(`  GIF search: ${gif.provider ?? 'off (paste a key in the console or .env)'}`);
   lines.push(`  Cache:      ${config.cacheDir}  ${formatBytes(stats.cacheBytes)} used of ${formatBytes(stats.cacheMaxBytes || config.cacheMaxBytes)}`);
   if (config.roots.length) {
     lines.push('  Roots:');

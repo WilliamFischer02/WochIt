@@ -1,69 +1,91 @@
-import { useEffect, useState } from 'react';
-import { Check, Copy } from 'lucide-react';
-import type { HealthResponse } from '@wochit/shared';
+// Footer line: addresses and PIN with copy buttons, who is connected, cache usage, encoder, and the
+// Stop host button (two-step confirm → POST /api/host/shutdown → the "Host stopped" card).
+import { useState } from 'react';
+import clsx from 'clsx';
+import { Power } from 'lucide-react';
 import { useApp } from '../../app/store';
-import { fetchHealth } from '../../lib/hostApi';
+import { ApiError, postShutdown } from '../../lib/hostApi';
 import { formatBytes } from '../../lib/format';
+import { useHostConsole, useHostHealth } from './hostConsoleStore';
+import { isTailnetUrl } from './share';
+import { CopyButton } from './ui';
 
-/** How often the footer re-reads /api/health so the cache number moves while transcoding. */
-const HEALTH_REFRESH_MS = 30_000;
+function StopHost() {
+  const hostOrigin = useApp((s) => s.hostOrigin);
+  const pin = useApp((s) => s.pin);
+  const setStopped = useHostConsole((s) => s.setStopped);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-function CopyButton({ text, label }: { text: string; label: string }) {
-  const [done, setDone] = useState(false);
-  return (
-    <button
-      type="button"
-      aria-label={`Copy ${label}`}
-      onClick={() => {
-        void navigator.clipboard?.writeText(text).then(() => {
-          setDone(true);
-          setTimeout(() => setDone(false), 1200);
-        });
-      }}
-      className="grid size-7 place-items-center rounded-pill text-muted hover:bg-white/10 hover:text-text"
-    >
-      {done ? <Check size={14} /> : <Copy size={14} />}
-    </button>
-  );
-}
+  const stop = async () => {
+    if (!pin || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await postShutdown(hostOrigin ?? window.location.origin, pin);
+      // The agent is going away: close our socket so it does not try to reconnect to nothing.
+      useApp.getState().socket?.close();
+      setStopped();
+    } catch (err) {
+      if (err instanceof ApiError) setError(err.status === 403 ? 'Only from the host PC.' : err.status === 401 ? 'Wrong PIN.' : err.message);
+      else setError('Could not reach the host.');
+      setBusy(false);
+      setConfirming(false);
+    }
+  };
 
-/** The tailnet URL is the one he sends to his girlfriend. */
-function isTailnetUrl(url: string): boolean {
-  try {
-    return new URL(url).hostname.endsWith('.ts.net');
-  } catch {
-    return false;
+  if (!confirming) {
+    return (
+      <span className="flex items-center gap-2">
+        <button
+          type="button"
+          data-testid="stop-host"
+          onClick={() => setConfirming(true)}
+          className="inline-flex items-center gap-1.5 rounded-pill border border-line px-3 py-1 text-xs font-semibold text-muted motion hover:border-bad/50 hover:bg-bad/10 hover:text-bad"
+        >
+          <Power size={13} aria-hidden="true" /> Stop host
+        </button>
+        {error && (
+          <span role="alert" data-testid="stop-host-error" className="text-xs text-bad">
+            {error}
+          </span>
+        )}
+      </span>
+    );
   }
-}
-
-function isLoopbackUrl(url: string): boolean {
-  return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(url);
+  return (
+    <span className="flex items-center gap-2 text-xs" data-testid="stop-host-confirm" role="group" aria-label="Really stop the host?">
+      <span className="font-semibold text-text">Really stop?</span>
+      <button
+        type="button"
+        data-testid="stop-host-yes"
+        disabled={busy}
+        onClick={() => void stop()}
+        className="rounded-pill bg-bad px-3 py-1 font-semibold text-white motion hover:brightness-110 disabled:opacity-50"
+      >
+        {busy ? 'Stopping…' : 'Yes'}
+      </button>
+      <button
+        type="button"
+        data-testid="stop-host-no"
+        disabled={busy}
+        onClick={() => setConfirming(false)}
+        className="rounded-pill border border-line px-3 py-1 font-semibold text-muted motion hover:bg-white/10 hover:text-text"
+      >
+        No
+      </button>
+    </span>
+  );
 }
 
 export default function HostFooter() {
   const hostOrigin = useApp((s) => s.hostOrigin);
   const pin = useApp((s) => s.pin);
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-
-  useEffect(() => {
-    if (!hostOrigin) return;
-    let alive = true;
-    const refresh = () => {
-      void fetchHealth(hostOrigin).then((h) => {
-        if (alive && h) setHealth(h);
-      });
-    };
-    refresh();
-    const id = setInterval(refresh, HEALTH_REFRESH_MS);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, [hostOrigin]);
+  const { health } = useHostHealth();
 
   const origin = hostOrigin ?? window.location.origin;
   const urls = health?.urls && health.urls.length > 0 ? health.urls : [origin];
-  const onlyLoopback = urls.every(isLoopbackUrl);
 
   return (
     <footer className="flex flex-wrap items-center gap-x-5 gap-y-2 px-1 text-xs text-muted" data-testid="host-footer">
@@ -83,6 +105,12 @@ export default function HostFooter() {
           <CopyButton text={pin} label="PIN" />
         </span>
       )}
+      {health?.members && (
+        <span data-testid="members-count" className="tnum">
+          <span className="text-text">{health.members.hosts}</span> {health.members.hosts === 1 ? 'host' : 'hosts'} ·{' '}
+          <span className="text-text">{health.members.guests}</span> {health.members.guests === 1 ? 'guest' : 'guests'}
+        </span>
+      )}
       {health?.cache && (
         <span data-testid="cache-usage">
           Cache <span className="tnum text-text">{formatBytes(health.cache.usedBytes)}</span> of {formatBytes(health.cache.maxBytes)}
@@ -90,10 +118,12 @@ export default function HostFooter() {
       )}
       {health && (
         <span>
-          encoder <span className="text-text">{health.ffmpeg.encoder ?? (health.ffmpeg.found ? 'auto' : 'ffmpeg missing')}</span>
+          encoder <span className={clsx('text-text', !health.ffmpeg.found && 'text-bad')}>{health.ffmpeg.encoder ?? (health.ffmpeg.found ? 'auto' : 'ffmpeg missing')}</span>
         </span>
       )}
-      {onlyLoopback && <span className="basis-full">Guests need your Tailscale URL (see Setup); this one only works on this PC.</span>}
+      <span className="ml-auto">
+        <StopHost />
+      </span>
     </footer>
   );
 }

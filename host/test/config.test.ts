@@ -41,6 +41,15 @@ describe('loadConfig', () => {
     expect(c.logLevel).toBe('info');
     expect(c.corsOrigins).toEqual(['https://wochit.vercel.app']);
     expect(c.version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(c.envPath).toBe(path.resolve(PACKAGE_DIR, '..', '.env')); // nothing loaded → where the console will write
+    expect(c.tailscaleShareLink).toBeNull();
+  });
+
+  it('reads WOCHIT_TS_SHARE_LINK, trimmed, blank → null', () => {
+    expect(loadConfig({ argv: [], env: { ...base, WOCHIT_TS_SHARE_LINK: '  https://login.tailscale.com/admin/invite/abc ' }, dotenv: false, cwd }).tailscaleShareLink).toBe(
+      'https://login.tailscale.com/admin/invite/abc',
+    );
+    expect(loadConfig({ argv: [], env: { ...base, WOCHIT_TS_SHARE_LINK: '   ' }, dotenv: false, cwd }).tailscaleShareLink).toBeNull();
   });
 
   it('generates a 6-digit PIN when none is set', () => {

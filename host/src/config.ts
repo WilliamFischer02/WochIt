@@ -54,6 +54,10 @@ export const ConfigSchema = z.object({
   corsOrigins: z.array(z.string().min(1)),
   /** Directory holding the built web app (index.html, assets/). */
   webDir: z.string().min(1),
+  /** The `.env` that was loaded (first match wins), or `<repo>/.env` when none exists yet. The host console writes here. */
+  envPath: z.string().min(1),
+  /** Tailscale share/invite link the host console shows for guests (WOCHIT_TS_SHARE_LINK); null when unset. Never logged. */
+  tailscaleShareLink: z.string().nullable(),
   /** Where chat logs go. */
   logsDir: z.string().min(1),
   logLevel: z.enum(['debug', 'info', 'warn', 'error']),
@@ -151,6 +155,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
   const cwd = opts.cwd ?? process.cwd();
 
   let env: NodeJS.ProcessEnv;
+  let envPath = path.join(repoDir, '.env');
   if (opts.env) {
     env = { ...opts.env };
   } else {
@@ -158,7 +163,12 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
     if (opts.dotenv !== false) {
       const candidates = [path.join(cwd, '.env'), path.join(repoDir, '.env')].filter((p, i, a) => a.indexOf(p) === i);
       const existing = candidates.filter((p) => existsSync(p));
-      if (existing.length) loadDotenv({ path: existing, processEnv: env, quiet: true });
+      const first = existing[0];
+      if (first) {
+        // dotenv applies the files in order and never overrides, so the first one is the effective one.
+        loadDotenv({ path: existing, processEnv: env, quiet: true });
+        envPath = first;
+      }
     }
   }
 
@@ -223,6 +233,8 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
     hostAddrs,
     corsOrigins: parseCorsOrigins(env.WOCHIT_CORS_ORIGINS),
     webDir,
+    envPath,
+    tailscaleShareLink: (env.WOCHIT_TS_SHARE_LINK ?? '').trim() || null,
     logsDir: path.join(packageDir, 'logs'),
     logLevel,
     fakeMedia: flags['fake-media'] === true,

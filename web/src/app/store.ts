@@ -3,7 +3,7 @@
 // the one place server messages mutate state, so both agents extend it rather than listening to
 // the socket separately.
 import { create } from 'zustand';
-import type { C2S, ChatMessage, ErrorCode, MediaInfo, Member, PlaybackState, ReactionKind, RenditionId, S2C } from '@wochit/shared';
+import type { C2S, ChatMessage, ErrorCode, MediaInfo, Member, MemberTelemetry, PlaybackState, ReactionKind, RenditionId, S2C } from '@wochit/shared';
 import type { SocketStatus, WochitSocket } from '../lib/socket';
 
 export type View = 'connect' | 'guest' | 'host';
@@ -42,7 +42,10 @@ export interface AppState {
   mediaToken: string | null;
   gifSearchAvailable: boolean;
   vlc: { connected: boolean; following: boolean };
+  /** Encode progress per rendition for the current media; cleared when the media changes. */
   transcode: Partial<Record<RenditionId, TranscodeInfo>>;
+  /** Host connections only: every guest's latest player report (S2C `telemetry`). Cleared on disconnect. */
+  telemetry: MemberTelemetry[];
 
   // ---- chat + reactions (chat agent)
   chat: {
@@ -89,6 +92,7 @@ const initial = {
   gifSearchAvailable: false,
   vlc: { connected: false, following: true },
   transcode: {},
+  telemetry: [] as MemberTelemetry[],
   chat: { messages: [], unread: 0, open: false },
   reactions: [],
 };
@@ -97,7 +101,8 @@ export const useApp = create<AppState>((set, get) => ({
   ...initial,
 
   setSocket: (socket) => set({ socket }),
-  setSocketStatus: (socketStatus) => set({ socketStatus }),
+  // Telemetry is only as fresh as the connection: drop it the moment the socket is gone.
+  setSocketStatus: (socketStatus) => set(socketStatus === 'open' || socketStatus === 'connecting' ? { socketStatus } : { socketStatus, telemetry: [] }),
   setHostOrigin: (hostOrigin) => set({ hostOrigin }),
   setPin: (pin) => set({ pin }),
   setView: (view) => set({ view }),
@@ -145,7 +150,10 @@ export const useApp = create<AppState>((set, get) => ({
       case 'reaction':
         set({ reactions: [...get().reactions, { id: ++reactionSeq, kind: msg.kind, from: msg.from, at: msg.at }] });
         return;
-      case 'transcode':
+      case 'transcode': {
+        // Progress for another media (a late message after a switch) must not paint the current one.
+        const current = get().media;
+        if (current && msg.mediaId !== current.id) return;
         set({
           transcode: {
             ...get().transcode,
@@ -153,8 +161,12 @@ export const useApp = create<AppState>((set, get) => ({
           },
         });
         return;
+      }
       case 'vlc':
         set({ vlc: { connected: msg.connected, following: msg.following } });
+        return;
+      case 'telemetry':
+        set({ telemetry: msg.members });
         return;
       case 'error':
         set({ lastError: { code: msg.code, message: msg.message } });

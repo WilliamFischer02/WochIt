@@ -20,8 +20,10 @@ import {
   type Gif,
   type MediaInfo,
   type Member,
+  type MemberTelemetry,
   type PlaybackSource,
   type PlaybackState,
+  type PlayerTelemetry,
   type RoomSnapshot,
   type S2C,
 } from '@wochit/shared';
@@ -68,7 +70,18 @@ export interface RoomOptions {
   /** After sending a command to VLC, ignore contradicting polls for this long. Default 600. */
   vlcSettleMs?: number;
   recentChatLimit?: number;
+  /** Schedules `fn` after `ms` and returns its cancel function. Default setTimeout; tests inject a manual one. */
+  setTimer?: (fn: () => void, ms: number) => () => void;
 }
+
+/** Guest telemetry is relayed to hosts at most this often (trailing edge). docs/PROTOCOL.md § Host-only. */
+export const TELEMETRY_COALESCE_MS = 500;
+
+const defaultSetTimer = (fn: () => void, ms: number): (() => void) => {
+  const t = setTimeout(fn, ms);
+  t.unref?.();
+  return () => clearTimeout(t);
+};
 
 /** Both URLs must be https on a Klipy/GIPHY CDN host (gif/index.ts); no arbitrary image URLs. */
 export function isAllowedGif(gif: Gif): boolean {
@@ -89,9 +102,10 @@ export class Room {
   private readonly bridge: VlcBridgeLike;
   private readonly log: Logger;
   private readonly mediaToken: string;
-  private readonly gifSearchAvailable: boolean;
+  private gifSearchAvailable: boolean;
   private readonly chatLogDir: string | null;
   private readonly now: () => number;
+  private readonly setTimer: (fn: () => void, ms: number) => () => void;
   private readonly heartbeatMs: number;
   private readonly vlcSeekThresholdSec: number;
   private readonly vlcSettleMs: number;
@@ -104,6 +118,9 @@ export class Room {
   /** Absolute paths we have learned for media ids (from VLC reports or getPath). */
   private readonly idToPath = new Map<string, string>();
   private readonly unsubscribe: Array<() => void> = [];
+  /** Latest player report per guest member id; relayed to host connections as `telemetry`. */
+  private readonly telemetry = new Map<string, MemberTelemetry>();
+  private cancelTelemetryTimer: (() => void) | null = null;
 
   private state: PlaybackState;
   private currentMedia: MediaInfo | null = null;
@@ -131,6 +148,7 @@ export class Room {
     this.gifSearchAvailable = opts.gifSearchAvailable;
     this.chatLogDir = opts.chatLogDir;
     this.now = opts.now ?? Date.now;
+    this.setTimer = opts.setTimer ?? defaultSetTimer;
     this.heartbeatMs = opts.heartbeatMs ?? 1000;
     this.vlcSeekThresholdSec = opts.vlcSeekThresholdSec ?? 1.0;
     this.vlcSettleMs = opts.vlcSettleMs ?? 600;
@@ -178,6 +196,23 @@ export class Room {
     return this.members.size;
   }
 
+  /** Connected members split by role, for /api/health. */
+  memberCounts(): { hosts: number; guests: number } {
+    let hosts = 0;
+    for (const r of this.members.values()) if (r.member.isHost) hosts++;
+    return { hosts, guests: this.members.size - hosts };
+  }
+
+  /** The latest report from every guest that has sent one. */
+  getTelemetry(): MemberTelemetry[] {
+    return [...this.telemetry.values()];
+  }
+
+  /** Flip what `welcome.gifSearchAvailable` says to new connections (GIF keys changed at runtime). */
+  setGifSearchAvailable(on: boolean): void {
+    this.gifSearchAvailable = on;
+  }
+
   vlcInfo(): { connected: boolean; following: boolean } {
     return { connected: this.vlcConnected, following: this.following };
   }
@@ -199,6 +234,8 @@ export class Room {
   dispose(): void {
     this.disposed = true;
     this.stopHeartbeat();
+    this.cancelTelemetryTimer?.();
+    this.cancelTelemetryTimer = null;
     for (const u of this.unsubscribe) u();
     this.unsubscribe.length = 0;
   }
@@ -221,6 +258,7 @@ export class Room {
       gifSearchAvailable: this.gifSearchAvailable,
       vlc: this.vlcInfo(),
     });
+    if (isHost && this.telemetry.size) p.conn.send({ type: 'telemetry', members: this.getTelemetry() });
     if (notHost) this.sendError(p.conn, 'not_host', 'host mode is only honoured for connections from the host PC');
     this.broadcastPresence(p.conn);
     this.log.info('%s joined as %s (%s, mode=%s, local=%s)', member.nick, member.id, isHost ? 'host' : 'guest', p.mode, p.isLocal);
@@ -233,6 +271,8 @@ export class Room {
     this.members.delete(conn);
     this.log.info('%s left (%s)', rec.member.nick, rec.member.id);
     this.broadcastPresence();
+    // Hosts learn at once that the report is gone (`[]` when it was the last one).
+    if (this.telemetry.delete(rec.member.id)) this.flushTelemetry();
   }
 
   private memberIdFor(clientId: string): string {
@@ -263,6 +303,8 @@ export class Room {
         return;
       case 'ping':
         conn.send({ type: 'pong', t: msg.t, serverTime: this.now() });
+        // Hosts have no player to report on; be lenient and drop whatever they attach.
+        if (msg.telemetry && !rec.member.isHost) this.onTelemetry(rec, msg.telemetry);
         return;
       case 'control':
         this.onControl(rec, msg);
@@ -609,6 +651,44 @@ export class Room {
     rec.member.nick = nick;
     this.broadcastPresence();
     this.systemLine(`${old} is now ${nick}`);
+  }
+
+  // ---------------------------------------------------------------- guest telemetry
+
+  private onTelemetry(rec: MemberRecord, t: PlayerTelemetry): void {
+    const now = this.now();
+    const hasClock = this.state.source !== 'none' && this.state.mediaId !== null;
+    const driftSec = hasClock ? t.position - expectedPosition(this.state, now) : 0;
+    this.telemetry.set(rec.member.id, { ...t, id: rec.member.id, driftSec, at: now });
+    this.scheduleTelemetry();
+  }
+
+  /** Trailing-edge coalescing: the first report in a quiet period starts one timer; everything that arrives before it fires goes out together. */
+  private scheduleTelemetry(): void {
+    if (this.cancelTelemetryTimer || this.disposed) return;
+    this.cancelTelemetryTimer = this.setTimer(() => {
+      this.cancelTelemetryTimer = null;
+      this.broadcastTelemetry();
+    }, TELEMETRY_COALESCE_MS);
+  }
+
+  /** Send the list now, folding in any pending coalesced update so nothing is sent twice. */
+  private flushTelemetry(): void {
+    this.cancelTelemetryTimer?.();
+    this.cancelTelemetryTimer = null;
+    this.broadcastTelemetry();
+  }
+
+  private broadcastTelemetry(): void {
+    const msg: S2C = { type: 'telemetry', members: this.getTelemetry() };
+    for (const rec of this.members.values()) {
+      if (!rec.member.isHost) continue;
+      try {
+        rec.conn.send(msg);
+      } catch (err) {
+        this.log.warn('send to %s failed: %s', rec.member.id, err instanceof Error ? err.message : String(err));
+      }
+    }
   }
 
   // ---------------------------------------------------------------- plumbing

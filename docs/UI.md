@@ -72,24 +72,89 @@ Waiting states on the stage:
   `transcode` messages; never a frozen frame without feedback for more than 500 ms.
 - iOS gesture gate: "Tap to join playback" large button over the stage.
 
-### 3. Host view (desktop), `web/src/features/hostmode`
+### 3. Host view — the console (desktop), `web/src/features/hostmode`
 
-Two columns on `--color-bg`: left 2/3 content, right 1/3 chat (same component as guest, always
-open, collapsible to the rail).
+Two columns on `--color-bg` from 900 px up: main column (max 1100 px) and the chat column on the
+right (same component as guest, open by default, collapsible to the rail). Below 900 px the panels
+take the full width and the chat is a drawer over them, toggled from the header
+(`host-chat-toggle`, unread badge); nothing may overflow horizontally at 390 px.
 
-Left column, top to bottom:
-- **Now playing card** (glass): poster thumbnail, title, source badge (`VLC`, `Browser`, `—`),
-  big elapsed/duration, a full-width scrubber (same component as guest), play/pause, the three
-  reaction buttons, and the sync pill for the guest ("Mia · in sync · 720p · 2.4 Mbps" from the
-  guest's reported stats — see `presence` extension below if implemented; otherwise just
-  "Mia connected").
-- **Follow VLC** toggle with status ("VLC connected · Dune.mkv"). When VLC is not reachable, a
-  hint: "Start VLC from here or enable its web interface — see Setup".
-- **Library**: breadcrumb + list of folders/files (name, duration, size) from `/api/library`;
-  search box filters the current folder; each file row has **Open in VLC** (primary) and **Play in
-  browsers** (secondary). Selecting switches the room's media and posts a system chat line.
-- Collapsed by default: **Show video here too** (renders the player stage above the card).
-- Footer line: host URL(s) and PIN with copy buttons, cache usage, encoder in use.
+The console polls `GET /api/health` every 10 s through one shared hook, `useHostHealth()`
+(`hostConsoleStore.ts`), and reads S2C `telemetry` into `store.telemetry`. `data-testid="host-view"`
+on the root.
+
+Main column, top to bottom:
+
+- **ReadinessPanel** (`readiness`): "Ready to watch?" with a summary chip (`readiness-summary`:
+  "All set" / "n things to fix", counting every non-ok row) and a collapse chevron
+  (`readiness-toggle`) that only works once all rows are ok; the collapsed state is remembered in
+  `localStorage['wochit.console.readinessCollapsed']`. One row per check, `ready-row-<key>` with
+  `data-tone` ok|warn|bad|muted, a status dot, a label, the status text (`ready-status-<key>`) and an
+  inline action (`ready-action-<key>`). Rules in `readiness.ts`:
+  - `host`: ok "Host agent v<version> on <local url>"; bad "Host agent not answering on <url>".
+  - `tailnet`: ok "Published: <url>"; bad "Not published. Run scripts\publish-tailnet.ps1" with a
+    copy button; warn "Tailscale CLI not found on the host" when health has no `tailnet`.
+  - `vlc`: ok "VLC connected, room follows it"; warn "VLC connected, not followed" + **Follow**
+    (sends `follow_vlc on`); muted "Not running. Pick a film below and press Open in VLC". Uses the
+    live socket `vlc` state, not the poll.
+  - `encoder`: ok "GPU encoder h264_nvenc" (any `*nvenc*`); warn "Software encoder <name>, expect
+    lower quality"; bad "ffmpeg not found".
+  - `gif`: ok "GIF search: <provider>"; bad "No key" with the inline key form (`gif-key-form`):
+    provider toggle `gif-provider-klipy` / `gif-provider-giphy`, a password input `gif-key-input`
+    ("Paste your Klipy key" / "Paste your GIPHY key"), **Save** (`gif-key-save`) →
+    `PATCH /api/host/settings` with the PIN header → "Saved. GIF search: <provider>" and the input
+    clears; errors inline (`gif-key-error`). "Get a free key" (`gif-key-link`, new tab, noopener)
+    points at partner.klipy.com, or developers.giphy.com/dashboard/ when GIPHY is toggled. A saved
+    key is never shown.
+  - `guests`: ok "<n> connected" (presence count, falling back to `health.members.guests`); muted
+    "None yet. Open the link on your phone to test."
+- **ShareCard — the invite composer** (`share-card`, `data-tailnet`). The tailnet URL is the
+  published one from health (else a listed `.ts.net` URL when the host cannot check). Without one
+  the card shows a warning (`share-local-hint`) and the invite is disabled.
+  - **Tailscale share link**, one time (`share-link-form`): input `share-link-input`, **Save**
+    (`share-link-save`, PATCHes `tailscaleShareLink`), help line "Tailscale admin → Machines →
+    <machine> → Share → Copy share link" and **Open Tailscale admin** (`share-link-admin`, new
+    tab, noopener → login.tailscale.com/admin/machines). Once stored: "Share link saved"
+    (`share-link-saved`) with **Change** (`share-link-change`) and **Clear** (`share-link-clear`,
+    PATCHes `''`). Errors inline (`share-link-error`).
+  - **Copy invite** (`copy-invite`, `data-invite-url` = the composed URL) copies
+    `Movie night 🎬 Tap this on your phone and follow the steps: <inviteUrl>` where `inviteUrl` =
+    `buildInviteUrl(PUBLIC_ORIGIN, { h: tailnetUrl, s: shareLink?, n: hostNick? })`
+    (`web/src/lib/publicOrigin.ts`: `VITE_PUBLIC_ORIGIN`, default `https://wochit.vercel.app`).
+    The PIN is never in the message.
+  - The PIN (`share-pin`, `copy-pin`) with "Tell her the PIN separately."
+  - The raw tailnet address, small (`share-url`, `copy-url`).
+  - A QR of the same invite URL as inline SVG (`share-qr`, error-correction M,
+    `qrcode-generator` lazy-loaded; `share-qr-placeholder` while unpublished).
+- **Show video here too** stage (`host-stage`), only when the checkbox below is on.
+- **NowPlayingCard** (`now-playing`): poster, source badge (`source-badge`), remote sync pill,
+  title (`now-playing-title`), an encode line (`encode-status`, `data-tone`) from `transcode`
+  messages — "Encoding 720p · 32:10 ready of 1:53:20" (the rendition furthest behind), "Encoded"
+  when all are done, red "Encoding 360p failed: <message>" — big elapsed/duration, the scrubber,
+  play/pause (`host-play-pause`) and the three reaction buttons.
+- **VlcCard** (`vlc-card`): **Follow VLC** switch (`follow-vlc`) and status (`vlc-status`).
+- **GuestsPanel** (`guests`): one row per guest, `guest-row-<memberId>` (`data-stale`,
+  `data-state`): nick (presence, "Guest" if unknown), state chip Playing / Paused / Stalled
+  (`guest-state-<id>`), position (`guest-position-<id>`, formatTime), drift
+  (`guest-drift-<id>`, signed one decimal + "ahead"/"behind", inner `data-tone` ok < 0.3 s,
+  warn < 1 s, bad otherwise), buffer "<n> s", rendition label (720p / Auto / Native / —), rtt
+  "<n> ms" when known, and "updated <n>s ago" (`guest-age-<id>`) from `at` against the synced
+  server clock; the row greys at 15 s. A guest on the presence list without a report shows
+  "Connected, no player yet". Empty state (`guests-empty`): "No guest connected. Open the link on
+  another device; it appears here within a few seconds." Guests send `PlayerTelemetry` with every
+  ping (every 3 s after the initial burst); host-mode clients never do.
+- **Show video here too** checkbox (`show-video`; for testing, the host PC normally watches in VLC).
+- **LibraryBrowser** (`library`): breadcrumbs (`crumb-<i>`), filter (`library-filter`), rows
+  `lib-row-<id>` with **Open in VLC** (`open-in-vlc-<id>`) and **Play in browsers**
+  (`play-in-browsers-<id>`). Selecting switches the room's media and posts a system chat line.
+- **HostFooter** (`host-footer`): URLs (`host-url`, the `.ts.net` one tagged "share this") and
+  PIN with copy buttons, "<h> host · <n> guests" (`members-count`, from `health.members`), cache
+  usage (`cache-usage`), encoder, and **Stop host** (`stop-host`) → inline "Really stop? Yes / No"
+  (`stop-host-confirm`, `stop-host-yes`, `stop-host-no`) → `POST /api/host/shutdown` with the PIN
+  header → the whole console is replaced by a centred card "Host stopped. You can close this
+  window." (`host-stopped`); errors inline (`stop-host-error`).
+
+The invite page she lands on is § 6.
 
 ### 4. Chat drawer, `web/src/features/chat`
 

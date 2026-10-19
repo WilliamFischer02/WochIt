@@ -1,17 +1,19 @@
 // End to end over real sockets: express app + ws server on an ephemeral port, FakeMediaService,
 // FakeBridge, two `ws` clients. The "remote" client connects over loopback but carries
 // X-Forwarded-For, exactly what `tailscale serve` does.
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { fileURLToPath } from 'node:url';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
-import { C2S, PROTOCOL_VERSION, S2C, type MediaInfo } from '@wochit/shared';
+import { C2S, HealthResponse, HostSettingsResponse, PROTOCOL_VERSION, S2C, ShutdownResponse, type MediaInfo } from '@wochit/shared';
 import { FailureLimiter, mediaToken } from '../src/auth.js';
-import { createGifService } from '../src/gif/index.js';
+import { createGifService, type GifService } from '../src/gif/index.js';
 import { silentLogger } from '../src/log.js';
+import type { TailnetStatus } from '../src/net/tailscale.js';
 import { Room } from '../src/room/room.js';
 import { createApp } from '../src/server/http.js';
 import { attachWebSocket, type WsHandle } from '../src/server/ws.js';
@@ -24,12 +26,22 @@ const REMOTE_IP = '100.90.1.2';
 const ALLOWED_ORIGIN = 'https://wochit.vercel.app';
 const CORS_ORIGINS = [ALLOWED_ORIGIN, 'https://allowed.example'];
 const URLS = ['http://127.0.0.1:8788', 'https://william-desktop.tail2ac207.ts.net:8443'];
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 let server: Server;
 let ws: WsHandle;
 let room: Room;
 let media: FakeMediaService;
 let bridge: FakeBridge;
+let gif: GifService;
+let envPath: string;
+let tailnetStatus: TailnetStatus | null = null;
+const onShutdownRequest = vi.fn();
+/** Every GIF provider call answers with the Klipy trending fixture; nothing leaves the process. */
+const gifFetch = vi.fn(async (input: string | URL | Request) => {
+  void input;
+  return new Response(readFileSync(path.join(HERE, 'fixtures', 'gif', 'klipy-trending.json'), 'utf8'), { status: 200, headers: { 'content-type': 'application/json' } });
+});
 let base: string;
 let wsUrl: string;
 let clock = 1_700_000_000_000;
@@ -121,11 +133,14 @@ beforeAll(async () => {
   writeFileSync(path.join(webDir, 'index.html'), '<!doctype html><title>WochIt</title><div id="root"></div>');
   writeFileSync(path.join(webDir, 'assets', 'index-abc123.js'), 'console.log("app")');
   writeFileSync(path.join(webDir, 'manifest.webmanifest'), '{"name":"WochIt"}');
+  envPath = path.join(mkdtempSync(path.join(os.tmpdir(), 'wochit-env-')), '.env');
+  writeFileSync(envPath, '# test env\nWOCHIT_PORT=8788\nKLIPY_API_KEY=\n', 'utf8');
+  gif = createGifService({ provider: 'auto', klipyKey: null, giphyKey: null, fetchImpl: gifFetch as unknown as typeof fetch });
   const app = createApp({
     media,
     room,
     bridge,
-    gif: createGifService({ provider: 'auto', klipyKey: null, giphyKey: null }),
+    gif,
     log: silentLogger,
     pin: PIN,
     mediaToken: TOKEN,
@@ -135,6 +150,10 @@ beforeAll(async () => {
     version: '0.0.0-test',
     corsOrigins: CORS_ORIGINS,
     urls: () => URLS,
+    envPath,
+    tailscaleShareLink: null,
+    tailnet: () => tailnetStatus,
+    onShutdownRequest,
   });
   server = createServer(app);
   ws = attachWebSocket({
@@ -167,17 +186,32 @@ describe('REST', () => {
     const res = await fetch(`${base}/api/health`);
     expect(res.status).toBe(200);
     expect(res.headers.get('access-control-allow-origin')).toBe('*');
-    expect(await res.json()).toEqual({
+    const body: unknown = await res.json();
+    expect(body).toEqual({
       ok: true,
       version: '0.0.0-test',
       protocol: PROTOCOL_VERSION,
       source: 'none',
-      vlc: { connected: false },
+      vlc: { connected: false, following: true },
       ffmpeg: { found: false, encoder: null },
       gifSearchAvailable: false,
+      gifProvider: null,
       cache: { usedBytes: 0, maxBytes: 0 },
       urls: URLS,
+      members: { hosts: 0, guests: 0 },
     });
+    expect(HealthResponse.safeParse(body).success).toBe(true);
+    expect(body).not.toHaveProperty('tailnet'); // no tailscale CLI → field absent
+  });
+
+  it('/api/health carries the cached tailnet check when the CLI answered', async () => {
+    tailnetStatus = { published: true, url: 'https://william-desktop.tail2ac207.ts.net:8443', checkedAt: clock };
+    try {
+      const body = HealthResponse.parse(await (await fetch(`${base}/api/health`)).json());
+      expect(body.tailnet).toEqual({ published: true, url: 'https://william-desktop.tail2ac207.ts.net:8443', checkedAt: clock });
+    } finally {
+      tailnetStatus = null;
+    }
   });
 
   describe('CORS for the Vercel copy of the web app', () => {
@@ -567,6 +601,18 @@ describe('a session: local host + remote guest', () => {
     expect((await guest.next('pong')).t).toBe(99);
   });
 
+  it('guest telemetry rides on ping and reaches the host as `telemetry` over the real socket; the guest only sees the pong', async () => {
+    const telemetry = { position: 41.5, playing: true, bufferedAheadSec: 8, rendition: 'auto' as const, stalled: false, rttMs: 62 };
+    guest.send({ type: 'ping', t: 11, telemetry });
+    expect((await guest.next('pong')).t).toBe(11);
+    const t = await host.next('telemetry');
+    expect(t.members).toHaveLength(1);
+    expect(t.members[0]).toMatchObject({ ...telemetry, id: guestId, at: clock });
+    expect(t.members[0]!.driftSec).toBeCloseTo(41.5 - 45, 6);
+    await sleep(50);
+    expect(guest.inbox.filter((m) => m.type === 'telemetry')).toHaveLength(0);
+  });
+
   it('a second tab with the same clientId gets its own member id; reconnecting after close reuses it', async () => {
     const tab2 = new Client();
     const w2 = await tab2.hello('Will', 'host-client-0001', 'auto');
@@ -588,6 +634,125 @@ describe('a session: local host + remote guest', () => {
     const w4 = await back.hello('Mia', 'guest-client-001', 'auto');
     expect(w4.you.id).toBe(guestId);
     guest = back;
+  });
+});
+
+describe('host console REST: /api/host/*', () => {
+  const hostHeaders = { 'x-wochit-pin': PIN };
+  const readEnv = (): string => readFileSync(envPath, 'utf8');
+
+  it('GET /api/host/settings is loopback + PIN only (401 bad_pin, 403 not_host) and never echoes keys', async () => {
+    const noPin = await fetch(`${base}/api/host/settings`);
+    expect(noPin.status).toBe(401);
+    expect(await noPin.json()).toMatchObject({ error: 'bad_pin' });
+    const wrongPin = await fetch(`${base}/api/host/settings`, { headers: { 'x-wochit-pin': '000000' } });
+    expect(wrongPin.status).toBe(401);
+    const remote = await fetch(`${base}/api/host/settings`, { headers: { ...hostHeaders, 'x-forwarded-for': REMOTE_IP } });
+    expect(remote.status).toBe(403);
+    expect(await remote.json()).toMatchObject({ error: 'not_host' });
+
+    const ok = await fetch(`${base}/api/host/settings`, { headers: hostHeaders });
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get('cache-control')).toBe('no-store');
+    const body = HostSettingsResponse.parse(await ok.json());
+    expect(body).toEqual({ gifSearchAvailable: false, gifProvider: null, keys: { klipy: false, giphy: false }, tailscaleShareLink: null });
+  });
+
+  it('PATCH /api/host/settings validates the body (400 bad_message) and enforces the same host-only rule', async () => {
+    const patch = (body: string, headers: Record<string, string> = {}) =>
+      fetch(`${base}/api/host/settings`, { method: 'PATCH', headers: { ...hostHeaders, 'content-type': 'application/json', ...headers }, body });
+    const before = readEnv();
+
+    const notObject = await patch('"abc"');
+    expect(notObject.status).toBe(400);
+    expect(await notObject.json()).toMatchObject({ error: 'bad_message' });
+    const badType = await patch(JSON.stringify({ klipyApiKey: 123 }));
+    expect(badType.status).toBe(400);
+    expect(await badType.json()).toMatchObject({ error: 'bad_message' });
+    const tooLong = await patch(JSON.stringify({ giphyApiKey: 'x'.repeat(201) }));
+    expect(tooLong.status).toBe(400);
+    const notJson = await patch('{nope');
+    expect(notJson.status).toBe(400);
+    expect(await notJson.json()).toMatchObject({ error: 'bad_message' });
+    const badLink = await patch(JSON.stringify({ tailscaleShareLink: 'not a url' }));
+    expect(badLink.status).toBe(400);
+    expect(await badLink.json()).toMatchObject({ error: 'bad_message' });
+    const noBody = await fetch(`${base}/api/host/settings`, { method: 'PATCH', headers: hostHeaders });
+    expect(noBody.status).toBe(400);
+
+    expect((await patch(JSON.stringify({ klipyApiKey: 'k' }), { 'x-forwarded-for': REMOTE_IP })).status).toBe(403);
+    expect((await fetch(`${base}/api/host/settings`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(401);
+
+    expect(readEnv()).toBe(before); // nothing was written
+    expect(gif.available).toBe(false);
+  });
+
+  it('PATCH writes the key into .env, flips GIF search on without a restart (health, welcome, /api/gif/*), and an empty string turns it off again', async () => {
+    const patch = (body: Record<string, string>) =>
+      fetch(`${base}/api/host/settings`, { method: 'PATCH', headers: { ...hostHeaders, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+    const on = await patch({ klipyApiKey: 'klipy-test-key' });
+    expect(on.status).toBe(200);
+    expect(HostSettingsResponse.parse(await on.json())).toEqual({ gifSearchAvailable: true, gifProvider: 'klipy', keys: { klipy: true, giphy: false }, tailscaleShareLink: null });
+    expect(readEnv()).toBe('# test env\nWOCHIT_PORT=8788\nKLIPY_API_KEY=klipy-test-key\n');
+
+    const health = HealthResponse.parse(await (await fetch(`${base}/api/health`)).json());
+    expect(health).toMatchObject({ gifSearchAvailable: true, gifProvider: 'klipy' });
+
+    const c = new Client();
+    const w = await c.hello('Will', 'settings-host-01', 'host');
+    expect(w.gifSearchAvailable).toBe(true);
+    expect(HealthResponse.parse(await (await fetch(`${base}/api/health`)).json()).members).toEqual({ hosts: 1, guests: 0 });
+    c.close();
+    await c.closed;
+
+    const featured = await fetch(`${base}/api/gif/featured`, { headers: hostHeaders });
+    expect(featured.status).toBe(200);
+    expect(await featured.json()).toMatchObject({ provider: 'klipy' });
+    expect(gifFetch).toHaveBeenCalled();
+    const calledUrl = String(gifFetch.mock.calls[0]?.[0]);
+    expect(calledUrl).toContain('klipy-test-key'); // the key went to the provider, never to a client
+    expect(JSON.stringify(health)).not.toContain('klipy-test-key');
+
+    // GIPHY key added too: Klipy still wins in auto mode; the file keeps both.
+    const both = await patch({ giphyApiKey: 'giphy-test-key' });
+    expect(HostSettingsResponse.parse(await both.json())).toEqual({ gifSearchAvailable: true, gifProvider: 'klipy', keys: { klipy: true, giphy: true }, tailscaleShareLink: null });
+    expect(readEnv()).toBe('# test env\nWOCHIT_PORT=8788\nKLIPY_API_KEY=klipy-test-key\nGIPHY_API_KEY=giphy-test-key\n');
+
+    // The Tailscale share link is stored as WOCHIT_TS_SHARE_LINK and returned in full (host-only route).
+    const link = 'https://login.tailscale.com/admin/invite/AbCdEf123?x=1';
+    const withLink = await patch({ tailscaleShareLink: link });
+    expect(withLink.status).toBe(200);
+    expect(HostSettingsResponse.parse(await withLink.json())).toMatchObject({ tailscaleShareLink: link, gifProvider: 'klipy' });
+    expect(readEnv()).toBe(`# test env\nWOCHIT_PORT=8788\nKLIPY_API_KEY=klipy-test-key\nGIPHY_API_KEY=giphy-test-key\nWOCHIT_TS_SHARE_LINK=${link}\n`);
+    expect(HostSettingsResponse.parse(await (await fetch(`${base}/api/host/settings`, { headers: hostHeaders })).json()).tailscaleShareLink).toBe(link);
+    expect(gif.provider).toBe('klipy'); // a link-only PATCH leaves GIF search alone
+
+    // Clearing everything: present-but-empty lines, GIF search off, link null, /api/gif/* back to its configured error.
+    const off = await patch({ klipyApiKey: '', giphyApiKey: '', tailscaleShareLink: '' });
+    expect(HostSettingsResponse.parse(await off.json())).toEqual({ gifSearchAvailable: false, gifProvider: null, keys: { klipy: false, giphy: false }, tailscaleShareLink: null });
+    expect(readEnv()).toBe('# test env\nWOCHIT_PORT=8788\nKLIPY_API_KEY=\nGIPHY_API_KEY=\nWOCHIT_TS_SHARE_LINK=\n');
+    expect(HealthResponse.parse(await (await fetch(`${base}/api/health`)).json())).toMatchObject({ gifSearchAvailable: false, gifProvider: null });
+    expect((await fetch(`${base}/api/gif/featured`, { headers: hostHeaders })).status).toBe(500);
+
+    // An empty patch is a no-op that still answers.
+    const noop = await patch({});
+    expect(noop.status).toBe(200);
+  });
+
+  it('POST /api/host/shutdown answers ShutdownResponse then fires the callback exactly once; host-only', async () => {
+    expect((await fetch(`${base}/api/host/shutdown`, { method: 'POST' })).status).toBe(401);
+    const remote = await fetch(`${base}/api/host/shutdown`, { method: 'POST', headers: { ...hostHeaders, 'x-forwarded-for': REMOTE_IP } });
+    expect(remote.status).toBe(403);
+    expect(onShutdownRequest).not.toHaveBeenCalled();
+
+    const res = await fetch(`${base}/api/host/shutdown`, { method: 'POST', headers: hostHeaders });
+    expect(res.status).toBe(200);
+    expect(ShutdownResponse.parse(await res.json())).toEqual({ ok: true, message: 'Host is shutting down' });
+    await vi.waitFor(() => expect(onShutdownRequest).toHaveBeenCalledTimes(1));
+    await sleep(30);
+    expect(onShutdownRequest).toHaveBeenCalledTimes(1);
+    expect((await fetch(`${base}/api/host/shutdown`)).status).toBe(404); // GET is not a route
   });
 });
 

@@ -4,18 +4,23 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import {
+  HostSettingsPatch,
   PROTOCOL_VERSION,
   RenditionId,
   type ErrorCode,
   type GifSearchResponse,
   type HealthResponse,
+  type HostSettingsResponse,
   type LibraryResponse,
+  type ShutdownResponse,
 } from '@wochit/shared';
 import { MediaError, type Logger, type MediaService } from '../media/index.js';
 import { FailureLimiter, pinMatches, safeEqual } from '../auth.js';
 import { GifError, type GifService } from '../gif/index.js';
 import { clientAddress, isLocalAddress } from '../net/hostDetect.js';
+import type { TailnetStatus } from '../net/tailscale.js';
 import type { Room } from '../room/room.js';
+import { upsertEnvValues } from '../settings/envFile.js';
 import type { VlcBridgeLike } from '../vlc/bridge.js';
 import { DEFAULT_CORS_ORIGINS, corsMiddleware } from './cors.js';
 
@@ -36,6 +41,14 @@ export interface HttpOptions {
   corsOrigins?: Iterable<string>;
   /** The URLs the banner prints; reported in /api/health so the web app can show them. */
   urls?: () => string[];
+  /** The `.env` file `PATCH /api/host/settings` writes (Config.envPath). */
+  envPath: string;
+  /** Initial Tailscale share link (Config.tailscaleShareLink); a PATCH replaces it in memory and in `.env`. */
+  tailscaleShareLink: string | null;
+  /** Cached `tailscale serve` check; null (field omitted from health) when unknown or no CLI. */
+  tailnet?: () => TailnetStatus | null;
+  /** Called once the `POST /api/host/shutdown` response has gone out; index.ts wires the graceful shutdown. */
+  onShutdownRequest?: () => void;
 }
 
 export const CONTENT_TYPE_M3U8 = 'application/vnd.apple.mpegurl';
@@ -163,12 +176,16 @@ export function createApp(opts: HttpOptions): express.Express {
       version: opts.version,
       protocol: PROTOCOL_VERSION,
       source: room.getState().source,
-      vlc: { connected: bridge.connected },
+      vlc: { connected: bridge.connected, following: room.vlcInfo().following },
       ffmpeg: { found: media.ffmpegFound, encoder: media.encoder },
       gifSearchAvailable: gif.available,
+      gifProvider: gif.provider,
       cache: { usedBytes: stats.cacheBytes, maxBytes: stats.cacheMaxBytes },
       urls: opts.urls?.() ?? [],
+      members: room.memberCounts(),
     };
+    const tailnet = opts.tailnet?.() ?? null;
+    if (tailnet) body.tailnet = tailnet;
     res.setHeader('Cache-Control', NO_STORE);
     res.json(body);
   });
@@ -176,6 +193,66 @@ export function createApp(opts: HttpOptions): express.Express {
   app.get('/api/library', requirePin, requireLocal, async (req, res) => {
     const parent = queryString(req.query.parent);
     const body: LibraryResponse = await media.browse(parent ? parent : null);
+    res.setHeader('Cache-Control', NO_STORE);
+    res.json(body);
+  });
+
+  // ---------------------------------------------------------------- /api/host (loopback + PIN, like /api/library)
+
+  // Host-only route, so the full link is returned; it is never written to the log.
+  let tailscaleShareLink: string | null = opts.tailscaleShareLink;
+  const settingsBody = (): HostSettingsResponse => ({ gifSearchAvailable: gif.available, gifProvider: gif.provider, keys: gif.keys, tailscaleShareLink });
+
+  app.get('/api/host/settings', requirePin, requireLocal, (_req, res) => {
+    res.setHeader('Cache-Control', NO_STORE);
+    res.json(settingsBody());
+  });
+
+  const jsonBody = express.json({ limit: '16kb', strict: true });
+  app.patch('/api/host/settings', requirePin, requireLocal, jsonBody, async (req, res) => {
+    const parsed = HostSettingsPatch.safeParse(req.body);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      const where = first?.path.map(String).join('.');
+      throw new HttpError(400, 'bad_message', `invalid settings${where ? ` (${where})` : ''}: ${first?.message ?? 'bad body'}`);
+    }
+    const patch = parsed.data;
+    const values: Record<string, string> = {};
+    if (patch.klipyApiKey !== undefined) values.KLIPY_API_KEY = patch.klipyApiKey;
+    if (patch.giphyApiKey !== undefined) values.GIPHY_API_KEY = patch.giphyApiKey;
+    if (patch.tailscaleShareLink !== undefined) values.WOCHIT_TS_SHARE_LINK = patch.tailscaleShareLink;
+    if (Object.keys(values).length) {
+      // Persist first: if the file cannot be written the running config must not drift from it.
+      await upsertEnvValues(opts.envPath, values);
+      if (patch.klipyApiKey !== undefined || patch.giphyApiKey !== undefined) {
+        gif.reconfigure({ klipyKey: patch.klipyApiKey, giphyKey: patch.giphyApiKey });
+        room.setGifSearchAvailable(gif.available);
+        log.info('GIF search reconfigured: %s', gif.provider ?? 'off');
+      }
+      if (patch.tailscaleShareLink !== undefined) {
+        tailscaleShareLink = patch.tailscaleShareLink || null;
+        log.info('Tailscale share link %s', tailscaleShareLink ? 'set' : 'cleared');
+      }
+    }
+    res.setHeader('Cache-Control', NO_STORE);
+    res.json(settingsBody());
+  });
+
+  app.post('/api/host/shutdown', requirePin, requireLocal, (_req, res) => {
+    const body: ShutdownResponse = { ok: true, message: 'Host is shutting down' };
+    let fired = false;
+    const fire = (): void => {
+      if (fired) return;
+      fired = true;
+      try {
+        opts.onShutdownRequest?.();
+      } catch (err) {
+        log.error('shutdown request handler failed: %s', err instanceof Error ? err.message : String(err));
+      }
+    };
+    // Only once the answer has left the process, so the console sees the confirmation.
+    res.once('finish', fire);
+    res.once('close', fire);
     res.setHeader('Cache-Control', NO_STORE);
     res.json(body);
   });

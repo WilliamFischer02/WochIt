@@ -4,7 +4,7 @@ import { useApp } from '../../app/store';
 import { WochitSocket, wsUrlFor } from '../../lib/socket';
 import { getClientId, savePref } from '../../lib/storage';
 
-const S2C_TYPES = ['welcome', 'pong', 'state', 'media', 'chat', 'reaction', 'presence', 'transcode', 'vlc', 'error'] as const satisfies readonly S2C['type'][];
+const S2C_TYPES = ['welcome', 'pong', 'state', 'media', 'chat', 'reaction', 'presence', 'transcode', 'vlc', 'telemetry', 'error'] as const satisfies readonly S2C['type'][];
 // Compile-time check that the list above covers every S2C type.
 type Missing = Exclude<S2C['type'], (typeof S2C_TYPES)[number]>;
 const _allTypesCovered: Missing extends never ? true : never = true;
