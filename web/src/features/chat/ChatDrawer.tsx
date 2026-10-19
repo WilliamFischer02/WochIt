@@ -51,7 +51,7 @@ function ColumnShell({ open, unread }: { open: boolean; unread: number }) {
   const setChatOpen = useApp((s) => s.setChatOpen);
   if (open) {
     return (
-      <section aria-label="Chat" className="flex h-full w-[360px] max-w-full flex-col bg-surface" data-chat-variant="column">
+      <section aria-label="Chat" className="flex h-full w-full flex-col bg-surface" data-chat-variant="column">
         <ChatPanel variant="column" />
       </section>
     );

@@ -25,10 +25,12 @@ export default function GuestView() {
     <div data-testid="guest-view" className={clsx('relative flex h-dvh w-full overflow-hidden bg-bg', layout === 'desktop' ? 'flex-row' : 'flex-col')}>
       <div
         className={clsx(
-          'relative bg-black',
-          layout === 'portrait' && (chatOpen ? 'aspect-video w-full shrink-0 safe-t' : 'w-full min-h-0 flex-1'),
+          // `relative` and `absolute` must not both be set: whichever rule the stylesheet emits last wins,
+          // and with `relative` winning the landscape stage became a zero-height flex child (black page).
+          'bg-black',
+          layout === 'portrait' && (chatOpen ? 'relative aspect-video w-full shrink-0 safe-t' : 'relative w-full min-h-0 flex-1'),
           layout === 'landscape' && 'absolute inset-0',
-          layout === 'desktop' && 'h-full min-w-0 flex-1',
+          layout === 'desktop' && 'relative h-full min-w-0 flex-1',
         )}
       >
         <VideoStage />
