@@ -66,12 +66,22 @@ export default function VideoStage({ className, noControls }: VideoStageProps) {
       const d = Number.isFinite(v.duration) ? v.duration : useApp.getState().media?.durationSec ?? 0;
       usePlayer.getState().patch({ duration: d });
     };
+    // Safari (native HLS) fires `waiting` and `stalled` during perfectly smooth playback whenever a
+    // segment fetch pauses for a moment, so an event alone is not a stall. Only a picture that has
+    // actually stopped moving for a while earns the spinner; `timeupdate` advancing clears it.
     const onWaiting = () => {
       if (waitTimer) return;
+      const at = v.currentTime;
       waitTimer = setTimeout(() => {
         waitTimer = null;
-        usePlayer.getState().patch({ buffering: true });
-      }, 300);
+        if (!v.paused && !v.seeking && Math.abs(v.currentTime - at) < 0.05) usePlayer.getState().patch({ buffering: true });
+      }, 700);
+    };
+    let lastTime = v.currentTime;
+    const onAdvance = () => {
+      const moved = v.currentTime !== lastTime;
+      lastTime = v.currentTime;
+      if (moved && usePlayer.getState().buffering) usePlayer.getState().patch({ buffering: false });
     };
     const onOk = () => {
       if (waitTimer) {
@@ -81,24 +91,24 @@ export default function VideoStage({ className, noControls }: VideoStageProps) {
       if (usePlayer.getState().buffering) usePlayer.getState().patch({ buffering: false });
     };
     v.addEventListener('timeupdate', onTime);
+    v.addEventListener('timeupdate', onAdvance);
     v.addEventListener('seeked', onTime);
     v.addEventListener('progress', updateBuffered);
     v.addEventListener('durationchange', onDuration);
     v.addEventListener('loadedmetadata', onDuration);
     v.addEventListener('waiting', onWaiting);
-    v.addEventListener('stalled', onWaiting);
     v.addEventListener('playing', onOk);
     v.addEventListener('canplay', onOk);
     v.addEventListener('pause', onOk);
     return () => {
       if (waitTimer) clearTimeout(waitTimer);
       v.removeEventListener('timeupdate', onTime);
+      v.removeEventListener('timeupdate', onAdvance);
       v.removeEventListener('seeked', onTime);
       v.removeEventListener('progress', updateBuffered);
       v.removeEventListener('durationchange', onDuration);
       v.removeEventListener('loadedmetadata', onDuration);
       v.removeEventListener('waiting', onWaiting);
-      v.removeEventListener('stalled', onWaiting);
       v.removeEventListener('playing', onOk);
       v.removeEventListener('canplay', onOk);
       v.removeEventListener('pause', onOk);
